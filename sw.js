@@ -1,4 +1,5 @@
-const CACHE_NAME = 'rolodex-v1';
+// Service Worker for Rolodex PWA Offline Support
+const CACHE_NAME = 'rolodex-cache-v1';
 const ASSETS = [
   './',
   './index.html',
@@ -8,21 +9,15 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.map((k) => k !== CACHE_NAME && caches.delete(k)))
-    )
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (e) => {
   e.respondWith(
-    caches.match(e.request).then((res) => res || fetch(e.request))
+    caches.match(e.request).then((response) => {
+      return response || fetch(e.request);
+    })
   );
 });

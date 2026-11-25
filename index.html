@@ -2,35 +2,322 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rolodex</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Rolodex Mobile</title>
   <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
   <link rel="stylesheet" href="styles.css">
-  <meta name="theme-color" content="#18181b">
 </head>
 <body>
-  <header>
-    <h2>Rolodex Planner</h2>
-  </header>
-  <nav>
-    <button class="active" onclick="switchTab('home')">Home</button>
-    <button onclick="switchTab('tasks')">Tasks</button>
-    <button onclick="switchTab('events')">Events</button>
-    <button onclick="switchTab('reminders')">Reminders</button>
-    <button onclick="switchTab('people')">People</button>
-  </nav>
+  <div id="app">
+    <!-- Top Header -->
+    <header class="app-header">
+      <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
+      <h1 class="app-title">Rolodex App</h1>
+      <div class="header-spacer"></div>
+    </header>
 
-  <main id="app-view">
-    <!-- View contents dynamically rendered by app.js -->
-  </main>
+    <!-- Main Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" data-tab="home">Home</button>
+      <button class="tab-btn" data-tab="tasks">Tasks</button>
+      <button class="tab-btn" data-tab="events">Events</button>
+      <button class="tab-btn" data-tab="reminders">Reminders</button>
+      <button class="tab-btn" data-tab="people">People</button>
+    </nav>
 
+    <!-- Tab Contents -->
+    <main class="content-container">
+
+      <!-- HOME TAB -->
+      <section id="tab-home" class="tab-content active">
+        <div class="card agenda-card">
+          <h2>Agenda Summary</h2>
+          <div id="agenda-summary" class="scrollable-agenda">
+            <div class="agenda-section">
+              <h3>Today</h3>
+              <div id="agenda-today" class="agenda-list"></div>
+            </div>
+            <div class="agenda-section">
+              <h3>This Week</h3>
+              <div id="agenda-week" class="agenda-list"></div>
+            </div>
+            <div class="agenda-section">
+              <h3>This Month</h3>
+              <div id="agenda-month" class="agenda-list"></div>
+            </div>
+            <div class="agenda-section">
+              <h3>This Quarter</h3>
+              <div id="agenda-quarter" class="agenda-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="week-nav-bar">
+          <button id="prev-week-btn" class="nav-arrow">&lt; Previous</button>
+          <span id="week-range-label" class="week-label">Current Week</span>
+          <button id="next-week-btn" class="nav-arrow">Next &gt;</button>
+        </div>
+
+        <div class="card week-view-card">
+          <h2 id="week-view-header">Week View</h2>
+          <div id="week-days-container" class="week-days-list"></div>
+        </div>
+
+        <div class="action-bar-bottom">
+          <button id="reset-week-btn" class="btn btn-secondary">Reset to Current Week</button>
+        </div>
+
+        <div id="day-details-modal" class="modal hidden">
+          <div class="modal-content">
+            <span class="close-modal" id="close-day-modal">&times;</span>
+            <h2 id="day-modal-title">Items for Day</h2>
+            <div id="day-modal-body"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TASKS TAB -->
+      <section id="tab-tasks" class="tab-content">
+        <div class="card form-card">
+          <h2>New Task</h2>
+          <form id="task-form">
+            <input type="hidden" id="task-id">
+            <div class="form-group">
+              <label for="task-title">Task:</label>
+              <input type="text" id="task-title" required placeholder="Task title...">
+            </div>
+            <div class="form-group">
+              <label for="task-assigned">Assigned Person:</label>
+              <select id="task-assigned"></select>
+            </div>
+            <div class="form-group">
+              <label for="task-project">Project Name:</label>
+              <select id="task-project"></select>
+            </div>
+            <div class="form-group">
+              <label for="task-deadline-type">Deadline Type:</label>
+              <select id="task-deadline-type">
+                <option value="date">Date</option>
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+                <option value="quarter">Quarter</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="task-deadline-val">Deadline Value:</label>
+              <div id="task-deadline-input-container">
+                <input type="date" id="task-deadline-val" required>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-task-btn">Save Task</button>
+          </form>
+        </div>
+
+        <div class="sub-nav-bar">
+          <div class="scrollable-chips" id="project-chips"></div>
+          <button id="add-project-btn" class="btn-sm">+ Project</button>
+        </div>
+
+        <div class="card list-card">
+          <h2>Tasks Scheduled</h2>
+          <div id="tasks-list" class="item-list"></div>
+        </div>
+      </section>
+
+      <!-- EVENTS TAB -->
+      <section id="tab-events" class="tab-content">
+        <div class="card form-card">
+          <h2>New Event</h2>
+          <form id="event-form">
+            <input type="hidden" id="event-id">
+            <div class="form-group">
+              <label for="event-title">Event Title / Person(s):</label>
+              <div id="event-persons-select" class="multi-select-box"></div>
+            </div>
+            <div class="form-group">
+              <label for="event-type">Event Type:</label>
+              <select id="event-type" required>
+                <option value="Birthday">Birthday</option>
+                <option value="Anniversary">Anniversary</option>
+                <option value="Death Anniversary">Death Anniversary</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="event-date">Date (Day & Month):</label>
+              <input type="date" id="event-date" required>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-event-btn">Save Event</button>
+          </form>
+        </div>
+
+        <div class="card list-card">
+          <h2>Events Scheduled (Current Quarter)</h2>
+          <div id="events-list" class="item-list"></div>
+        </div>
+      </section>
+
+      <!-- REMINDERS TAB -->
+      <section id="tab-reminders" class="tab-content">
+        <div class="card form-card">
+          <h2>New Reminder</h2>
+          <form id="reminder-form">
+            <input type="hidden" id="reminder-id">
+            <div class="form-group">
+              <label for="reminder-title">Reminder:</label>
+              <input type="text" id="reminder-title" required placeholder="Reminder text...">
+            </div>
+            <div class="form-group">
+              <label for="reminder-aspect">Aspect / List Name:</label>
+              <select id="reminder-aspect"></select>
+            </div>
+            <div class="form-group">
+              <label>Repetition:</label>
+              <div class="repeat-config">
+                <span>Every</span>
+                <input type="number" id="reminder-weeks-interval" min="1" value="1" style="width: 60px;">
+                <span>week(s) on:</span>
+              </div>
+              <div class="day-toggle-bar">
+                <button type="button" class="day-chip" data-day="0">S</button>
+                <button type="button" class="day-chip" data-day="1">M</button>
+                <button type="button" class="day-chip" data-day="2">T</button>
+                <button type="button" class="day-chip" data-day="3">W</button>
+                <button type="button" class="day-chip" data-day="4">T</button>
+                <button type="button" class="day-chip" data-day="5">F</button>
+                <button type="button" class="day-chip" data-day="6">S</button>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-reminder-btn">Save Reminder</button>
+          </form>
+        </div>
+
+        <div class="sub-nav-bar">
+          <div class="scrollable-chips" id="aspect-chips"></div>
+          <button id="add-aspect-btn" class="btn-sm">+ Aspect</button>
+        </div>
+
+        <div class="card list-card">
+          <h2>Reminders List</h2>
+          <div id="reminders-list" class="item-list"></div>
+        </div>
+      </section>
+
+      <!-- PEOPLE TAB -->
+      <section id="tab-people" class="tab-content">
+        <div class="card form-card">
+          <h2>Add / Edit Person</h2>
+          <form id="person-form">
+            <input type="hidden" id="person-id">
+            <input type="hidden" id="person-serial-code">
+            <div class="form-group">
+              <label for="person-name">Full Name:</label>
+              <input type="text" id="person-name" required placeholder="Contact name...">
+            </div>
+            <div class="form-group">
+              <label>Photo:</label>
+              <input type="file" id="person-photo-input" accept="image/*">
+              <div id="person-photo-preview" class="photo-preview"></div>
+            </div>
+            <div class="form-group">
+              <label>Phone Numbers:</label>
+              <div id="phones-container"></div>
+              <button type="button" id="add-phone-btn" class="btn-sm">+ Add Phone</button>
+            </div>
+            <div class="form-group">
+              <label>Email Addresses:</label>
+              <div id="emails-container"></div>
+              <button type="button" id="add-email-btn" class="btn-sm">+ Add Email</button>
+            </div>
+            <div class="form-group">
+              <label>Relationships:</label>
+              <div id="relationships-container"></div>
+              <button type="button" id="add-relationship-btn" class="btn-sm">+ Add Relationship</button>
+            </div>
+            <div class="form-group">
+              <label for="person-notes">Notes:</label>
+              <textarea id="person-notes" rows="3" placeholder="Additional details..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-person-btn">Save Person</button>
+          </form>
+        </div>
+
+        <div class="card list-card">
+          <h2>People Directory</h2>
+          <div id="people-list" class="item-list"></div>
+        </div>
+
+        <div id="person-details-modal" class="modal hidden">
+          <div class="modal-content">
+            <span class="close-modal" id="close-person-modal">&times;</span>
+            <div id="person-details-body"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-content">
+        <span class="close-modal" id="close-settings-modal">&times;</span>
+        <h2>Settings & Data Management</h2>
+        <div class="settings-section">
+          <h3>Export Data</h3>
+          <div class="form-group">
+            <label for="export-tab-select">Select Tab Data:</label>
+            <select id="export-tab-select">
+              <option value="all">All Data (Full Backup)</option>
+              <option value="tasks">Tasks Only</option>
+              <option value="events">Events Only</option>
+              <option value="reminders">Reminders Only</option>
+              <option value="people">People Only</option>
+            </select>
+          </div>
+          <button id="export-data-btn" class="btn btn-secondary">Export JSON</button>
+        </div>
+        <hr>
+        <div class="settings-section">
+          <h3>Import Data</h3>
+          <div class="form-group">
+            <label for="import-tab-select">Target Tab:</label>
+            <select id="import-tab-select">
+              <option value="all">Full Backup Restore</option>
+              <option value="tasks">Tasks</option>
+              <option value="events">Events</option>
+              <option value="reminders">Reminders</option>
+              <option value="people">People</option>
+            </select>
+          </div>
+          <input type="file" id="import-file-input" accept=".json,.csv">
+          <button id="import-data-btn" class="btn btn-secondary">Import File</button>
+        </div>
+        <hr>
+        <div class="settings-section">
+          <h3>Download Sample Templates</h3>
+          <div class="sample-btn-grid">
+            <button class="btn-sm sample-btn" data-type="tasks">Tasks Sample</button>
+            <button class="btn-sm sample-btn" data-type="events">Events Sample</button>
+            <button class="btn-sm sample-btn" data-type="reminders">Reminders Sample</button>
+            <button class="btn-sm sample-btn" data-type="people">People Sample</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTEXT / ACTION MODAL FOR LONG PRESS -->
+    <div id="action-modal" class="modal hidden">
+      <div class="modal-content modal-sm">
+        <h3 id="action-modal-title">Item Options</h3>
+        <div class="action-modal-buttons">
+          <button id="action-edit-btn" class="btn btn-primary">Edit</button>
+          <button id="action-delete-btn" class="btn btn-danger">Delete</button>
+          <button id="action-cancel-btn" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
   <script src="app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js');
-      });
-    }
-  </script>
 </body>
 </html>
