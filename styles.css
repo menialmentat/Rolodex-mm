@@ -1,0 +1,72 @@
+:root {
+  --bg: #121212;
+  --card: #1e1e1e;
+  --accent: #3b82f6;
+  --text: #e5e7eb;
+  --border: #27272a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+header {
+  background: #18181b;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+nav {
+  display: flex;
+  background: #18181b;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+nav button {
+  flex: 1;
+  padding: 12px 8px;
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+nav button.active {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+main {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+input, select, textarea, button.btn {
+  width: 100%;
+  padding: 10px;
+  margin-top: 6px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #27272a;
+  color: var(--text);
+}
+button.btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rolodex</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="theme-color" content="#18181b">
+</head>
+<body>
+  <header>
+    <h2>Rolodex Planner</h2>
+  </header>
+  <nav>
+    <button class="active" onclick="switchTab('home')">Home</button>
+    <button onclick="switchTab('tasks')">Tasks</button>
+    <button onclick="switchTab('events')">Events</button>
+    <button onclick="switchTab('reminders')">Reminders</button>
+    <button onclick="switchTab('people')">People</button>
+  </nav>
+
+  <main id="app-view">
+    <!-- View contents dynamically rendered by app.js -->
+  </main>
+
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js');
+      });
+    }
+  </script>
+</body>
+</html>
