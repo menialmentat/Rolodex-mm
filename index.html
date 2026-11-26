@@ -2,151 +2,357 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rolodex PWA v4</title>
-  <link rel="stylesheet" href="styles.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Rolodex Mobile PWA</title>
   <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
-    <!-- Header / Dual Calendar Navigation -->
+    <!-- Header with Settings -->
     <header class="app-header">
-      <div class="calendar-toggle">
-        <span id="primary-date-display" class="date-badge primary">--</span>
-        <span id="secondary-date-display" class="date-badge secondary">--</span>
-      </div>
-      <div class="header-controls">
-        <button id="prev-date-btn">&larr;</button>
-        <button id="today-btn">Today</button>
-        <button id="next-date-btn">&rarr;</button>
-      </div>
+      <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
+      <h1 class="app-title">Rolodex App</h1>
+      <div class="header-spacer"></div>
     </header>
 
-    <!-- Navigation Tabs (Logs & Journal revert to V2 baseline/removed from V4 updates) -->
-    <nav class="tab-bar">
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
       <button class="tab-btn active" data-tab="home">Home</button>
-      <button class="tab-btn" data-tab="people">People</button>
-      <button class="tab-btn" data-tab="events">Events</button>
       <button class="tab-btn" data-tab="tasks">Tasks</button>
+      <button class="tab-btn" data-tab="events">Events</button>
       <button class="tab-btn" data-tab="reminders">Reminders</button>
-      <button class="tab-btn" data-tab="week">Week</button>
+      <button class="tab-btn" data-tab="people">People</button>
     </nav>
 
-    <!-- Main Content Area -->
-    <main class="tab-content">
-      
+    <!-- Main Content -->
+    <main class="content-container">
+
       <!-- HOME TAB -->
-      <section id="tab-home" class="tab-pane active">
-        <div class="section-header">
+      <section id="tab-home" class="tab-content active">
+        <div class="card agenda-card">
           <h2>Agenda Summary</h2>
-          <label class="toggle-switch">
-            <input type="checkbox" id="agenda-reminder-toggle">
-            <span class="slider"></span>
-            <span class="toggle-label">Reminders Only</span>
-          </label>
+          <div id="agenda-summary" class="scrollable-agenda">
+            <div class="agenda-section">
+              <h3>Today</h3>
+              <div id="agenda-today" class="agenda-list"></div>
+            </div>
+            <div class="agenda-section">
+              <h3>This Week</h3>
+              <div id="agenda-week" class="agenda-list"></div>
+            </div>
+            <div class="agenda-section">
+              <h3>This Month</h3>
+              <div id="agenda-month" class="agenda-list"></div>
+            </div>
+            <div class="agenda-section">
+              <h3>This Quarter</h3>
+              <div id="agenda-quarter" class="agenda-list"></div>
+            </div>
+          </div>
         </div>
-        <div id="agenda-summary-container" class="card">
-          <!-- Populated dynamically -->
-        </div>
-      </section>
 
-      <!-- PEOPLE TAB -->
-      <section id="tab-people" class="tab-pane">
-        <div class="section-header">
-          <h2>People</h2>
-          <button id="add-person-btn" class="btn primary">+ Add Person</button>
+        <div class="week-nav-bar">
+          <button id="prev-week-btn" class="nav-arrow">&lt; Previous</button>
+          <span id="week-range-label" class="week-label">Current Week</span>
+          <button id="next-week-btn" class="nav-arrow">Next &gt;</button>
         </div>
-        <div class="search-bar">
-          <input type="text" id="person-search-input" placeholder="Search by name or alias...">
-        </div>
-        <div id="people-list-container" class="people-grid">
-          <!-- Populated dynamically (Names only, code hidden; photo full-page click) -->
-        </div>
-      </section>
 
-      <!-- EVENTS TAB -->
-      <section id="tab-events" class="tab-pane">
-        <div class="section-header">
-          <h2>Events</h2>
-          <button id="add-event-btn" class="btn primary">+ New Event</button>
+        <div class="card week-view-card">
+          <h2>Week View</h2>
+          <div id="week-days-container" class="week-days-list"></div>
         </div>
-        <div id="events-list-container" class="card">
-          <!-- Populated dynamically -->
+
+        <div class="action-bar-bottom">
+          <button id="reset-week-btn" class="btn btn-secondary">Reset to Current Week</button>
+        </div>
+
+        <!-- Day Details Modal -->
+        <div id="day-details-modal" class="modal hidden">
+          <div class="modal-content">
+            <span class="close-modal" id="close-day-modal">&times;</span>
+            <h2 id="day-modal-title">Items for Day</h2>
+            <div id="day-modal-body"></div>
+          </div>
         </div>
       </section>
 
       <!-- TASKS TAB -->
-      <section id="tab-tasks" class="tab-pane">
-        <div class="section-header">
-          <h2>Tasks</h2>
-          <button id="add-task-btn" class="btn primary">+ New Task</button>
+      <section id="tab-tasks" class="tab-content">
+        <div class="card form-card">
+          <h2>New Task</h2>
+          <form id="task-form">
+            <input type="hidden" id="task-id">
+            <div class="form-group">
+              <label for="task-title">Task Name:</label>
+              <input type="text" id="task-title" required placeholder="Task title...">
+            </div>
+            <div class="form-group">
+              <label for="task-assigned-search">Assigned Person:</label>
+              <div class="searchable-select-container">
+                <input type="text" id="task-assigned-search" placeholder="Type to search person..." autocomplete="off">
+                <input type="hidden" id="task-assigned">
+                <div id="task-assigned-results" class="search-results-dropdown hidden"></div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="task-project">Project Name:</label>
+              <select id="task-project"></select>
+            </div>
+            <div class="form-group">
+              <label for="task-deadline-type">Deadline Type:</label>
+              <select id="task-deadline-type">
+                <option value="date">Date</option>
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+                <option value="quarter">Quarter</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="task-deadline-val">Deadline:</label>
+              <div id="task-deadline-input-container">
+                <input type="date" id="task-deadline-val" required>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-task-btn">Save Task</button>
+          </form>
         </div>
-        <div id="tasks-day-view-container">
-          <div class="task-group">
-            <h3>Today</h3>
-            <div id="tasks-today-list" class="task-list"></div>
-          </div>
-          <div class="task-group">
-            <h3>This Week</h3>
-            <div id="tasks-week-list" class="task-list"></div>
-          </div>
-          <div class="task-group">
-            <h3>This Month</h3>
-            <div id="tasks-month-list" class="task-list"></div>
-          </div>
-          <div class="task-group">
-            <h3>This Quarter</h3>
-            <div id="tasks-quarter-list" class="task-list"></div>
-          </div>
+
+        <div class="sub-nav-bar">
+          <div class="scrollable-chips" id="project-chips"></div>
+          <button id="add-project-btn" class="btn-sm">+ Project</button>
+        </div>
+
+        <div class="card list-card">
+          <h2>Tasks Scheduled</h2>
+          <div id="tasks-list" class="item-list"></div>
+        </div>
+      </section>
+
+      <!-- EVENTS TAB -->
+      <section id="tab-events" class="tab-content">
+        <div class="card form-card">
+          <h2>New Event</h2>
+          <form id="event-form">
+            <input type="hidden" id="event-id">
+            <div class="form-group">
+              <label for="event-person-search">Person(s) Involved:</label>
+              <div class="searchable-multi-select">
+                <input type="text" id="event-person-search" placeholder="Type to search and select person..." autocomplete="off">
+                <div id="event-selected-tags" class="selected-tags-container"></div>
+                <div id="event-person-results" class="search-results-dropdown hidden"></div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="event-type">Event Type:</label>
+              <select id="event-type" required>
+                <option value="Birthday">Birthday</option>
+                <option value="Anniversary">Anniversary</option>
+                <option value="Death Anniversary">Death Anniversary</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="event-date">Date (Day & Month):</label>
+              <input type="date" id="event-date" required>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-event-btn">Save Event</button>
+          </form>
+        </div>
+
+        <div class="card list-card">
+          <h2>Events Scheduled (Current Quarter)</h2>
+          <div id="events-list" class="item-list"></div>
         </div>
       </section>
 
       <!-- REMINDERS TAB -->
-      <section id="tab-reminders" class="tab-pane">
-        <div class="section-header">
-          <h2>Reminders</h2>
-          <button id="add-reminder-btn" class="btn primary">+ New Reminder</button>
+      <section id="tab-reminders" class="tab-content">
+        <div class="card form-card">
+          <h2>New Reminder</h2>
+          <form id="reminder-form">
+            <input type="hidden" id="reminder-id">
+            <div class="form-group">
+              <label for="reminder-title">Reminder:</label>
+              <input type="text" id="reminder-title" required placeholder="Reminder text...">
+            </div>
+            <div class="form-group">
+              <label for="reminder-start-date">Start Date:</label>
+              <input type="date" id="reminder-start-date" required>
+            </div>
+            <div class="form-group">
+              <label for="reminder-aspect">Aspect / List Name:</label>
+              <select id="reminder-aspect"></select>
+            </div>
+            <div class="form-group">
+              <label>Repetition:</label>
+              <div class="repeat-config">
+                <span>Every</span>
+                <input type="number" id="reminder-weeks-interval" min="1" value="1" style="width: 60px;">
+                <span>week(s) on:</span>
+              </div>
+              <div class="day-toggle-bar">
+                <button type="button" class="day-chip" data-day="0">S</button>
+                <button type="button" class="day-chip" data-day="1">M</button>
+                <button type="button" class="day-chip" data-day="2">T</button>
+                <button type="button" class="day-chip" data-day="3">W</button>
+                <button type="button" class="day-chip" data-day="4">T</button>
+                <button type="button" class="day-chip" data-day="5">F</button>
+                <button type="button" class="day-chip" data-day="6">S</button>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-reminder-btn">Save Reminder</button>
+          </form>
         </div>
-        <div class="reminder-score-card">
-          <span>Completion Score (to yesterday): </span>
-          <strong id="reminder-score-val">0%</strong>
+
+        <div class="sub-nav-bar">
+          <div class="scrollable-chips" id="aspect-chips"></div>
+          <button id="add-aspect-btn" class="btn-sm">+ Aspect</button>
         </div>
-        <div id="reminders-list-container" class="card">
-          <!-- Details removed, % completion score shown -->
+
+        <div class="card list-card">
+          <h2>Reminders List</h2>
+          <div id="reminders-list" class="item-list"></div>
         </div>
       </section>
 
-      <!-- WEEK VIEW TAB -->
-      <section id="tab-week" class="tab-pane">
-        <div class="section-header">
-          <h2>Week View</h2>
+      <!-- PEOPLE TAB -->
+      <section id="tab-people" class="tab-content">
+        <div class="card form-card">
+          <h2>Add / Edit Person</h2>
+          <form id="person-form">
+            <input type="hidden" id="person-id">
+            <input type="hidden" id="person-serial-code">
+            <div class="form-group">
+              <label for="person-name">Full Name:</label>
+              <input type="text" id="person-name" required placeholder="Contact name...">
+            </div>
+            <div class="form-group">
+              <label>Photo:</label>
+              <input type="file" id="person-photo-input" accept="image/*">
+              <div id="person-photo-preview" class="photo-preview"></div>
+            </div>
+            <div class="form-group">
+              <label>Phone Numbers:</label>
+              <div id="phones-container"></div>
+              <button type="button" id="add-phone-btn" class="btn-sm">+ Add Phone</button>
+            </div>
+            <div class="form-group">
+              <label>Email Addresses:</label>
+              <div id="emails-container"></div>
+              <button type="button" id="add-email-btn" class="btn-sm">+ Add Email</button>
+            </div>
+            <div class="form-group">
+              <label>Relationships:</label>
+              <div id="relationships-container"></div>
+              <button type="button" id="add-relationship-btn" class="btn-sm">+ Add Relationship</button>
+            </div>
+            <div class="form-group">
+              <label for="person-notes">Notes:</label>
+              <textarea id="person-notes" rows="3" placeholder="Additional details..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" id="save-person-btn">Save Person</button>
+          </form>
         </div>
-        <div id="week-view-container" class="week-grid">
-          <!-- Refined order, last 10 events highlighted red, reminders toggleable -->
+
+        <div class="card list-card">
+          <h2>People Directory</h2>
+          <div id="people-list" class="item-list"></div>
+        </div>
+
+        <div id="person-details-modal" class="modal hidden">
+          <div class="modal-content">
+            <span class="close-modal" id="close-person-modal">&times;</span>
+            <div id="person-details-body"></div>
+          </div>
         </div>
       </section>
-
     </main>
-  </div>
 
-  <!-- Full-Page Photo Modal -->
-  <div id="photo-modal" class="modal light-box">
-    <span id="close-photo-modal" class="modal-close">&times;</span>
-    <img id="full-page-photo" src="" alt="Full View">
-  </div>
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-content">
+        <span class="close-modal" id="close-settings-modal">&times;</span>
+        <h2>Settings & Data Management</h2>
+        
+        <div class="settings-section">
+          <h3>Manage Custom Lists & Projects</h3>
+          <div class="form-group">
+            <label>Delete Custom Project:</label>
+            <div class="inline-select-btn">
+              <select id="settings-delete-project-select"></select>
+              <button id="settings-delete-project-btn" class="btn btn-danger btn-sm">Delete Project</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Delete Custom Aspect:</label>
+            <div class="inline-select-btn">
+              <select id="settings-delete-aspect-select"></select>
+              <button id="settings-delete-aspect-btn" class="btn btn-danger btn-sm">Delete Aspect</button>
+            </div>
+          </div>
+        </div>
+        <hr>
 
-  <!-- Generic Item / Input Modal -->
-  <div id="form-modal" class="modal">
-    <div class="modal-content card">
-      <span id="close-form-modal" class="modal-close">&times;</span>
-      <h3 id="modal-title">Form</h3>
-      <form id="generic-form">
-        <div id="form-fields-container"></div>
-        <button type="submit" class="btn primary mt-1">Save</button>
-      </form>
+        <div class="settings-section">
+          <h3>Export Data</h3>
+          <div class="form-group">
+            <label for="export-tab-select">Select Tab Data:</label>
+            <select id="export-tab-select">
+              <option value="all">All Data (Full Backup)</option>
+              <option value="tasks">Tasks Only</option>
+              <option value="events">Events Only</option>
+              <option value="reminders">Reminders Only</option>
+              <option value="people">People Only</option>
+            </select>
+          </div>
+          <button id="export-data-btn" class="btn btn-secondary">Export JSON</button>
+        </div>
+        <hr>
+
+        <div class="settings-section">
+          <h3>Import Data</h3>
+          <div class="form-group">
+            <label for="import-tab-select">Target Tab:</label>
+            <select id="import-tab-select">
+              <option value="all">Full Backup Restore</option>
+              <option value="tasks">Tasks</option>
+              <option value="events">Events</option>
+              <option value="reminders">Reminders</option>
+              <option value="people">People</option>
+            </select>
+          </div>
+          <input type="file" id="import-file-input" accept=".json,.csv">
+          <button id="import-data-btn" class="btn btn-secondary">Import File</button>
+        </div>
+        <hr>
+
+        <div class="settings-section">
+          <h3>Download Sample Templates</h3>
+          <div class="sample-btn-grid">
+            <button class="btn-sm sample-btn" data-type="tasks">Tasks Sample</button>
+            <button class="btn-sm sample-btn" data-type="events">Events Sample</button>
+            <button class="btn-sm sample-btn" data-type="reminders">Reminders Sample</button>
+            <button class="btn-sm sample-btn" data-type="people">People Sample</button>
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
 
+    <!-- ACTION / LONG PRESS MODAL -->
+    <div id="action-modal" class="modal hidden">
+      <div class="modal-content modal-sm">
+        <h3 id="action-modal-title">Item Options</h3>
+        <div class="action-modal-buttons">
+          <button id="action-edit-btn" class="btn btn-primary">Edit</button>
+          <button id="action-delete-btn" class="btn btn-danger">Delete</button>
+          <button id="action-cancel-btn" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
   <script src="app.js"></script>
 </body>
 </html>
