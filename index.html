@@ -192,6 +192,12 @@
               <input type="date" id="reminder-start-date" required>
             </div>
             <div class="form-group">
+              <label for="reminder-routine" class="checkbox-inline">
+                <input type="checkbox" id="reminder-routine">
+                <span>Routine</span>
+              </label>
+            </div>
+            <div class="form-group">
               <label for="reminder-aspect">Aspect / List Name:</label>
               <select id="reminder-aspect"></select>
             </div>
@@ -368,6 +374,7 @@
         <h3 id="action-modal-title">Item Options</h3>
         <div class="action-modal-buttons">
           <button type="button" id="action-edit-btn" class="btn btn-primary">Edit</button>
+          <button type="button" id="action-duplicate-btn" class="btn btn-secondary hidden">Duplicate</button>
           <button type="button" id="action-delete-btn" class="btn btn-danger">Delete</button>
           <button type="button" id="action-cancel-btn" class="btn btn-secondary">Cancel</button>
         </div>

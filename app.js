@@ -1,4 +1,4 @@
-// Rolodex PWA - Version 4 Codebase
+// Rolodex PWA - Version 6 Codebase
 const DB_NAME = 'RolodexDB';
 const DB_VERSION = 2;
 const BACKUP_FILENAME = 'rolodex_backup.json';
@@ -290,6 +290,7 @@ function setupEventListeners() {
   document.getElementById('action-cancel-btn').addEventListener('click', () => {
     document.getElementById('action-modal').classList.add('hidden');
   });
+  document.getElementById('action-duplicate-btn').addEventListener('click', handleLongPressDuplicate);
   document.getElementById('action-delete-btn').addEventListener('click', handleLongPressDelete);
   document.getElementById('action-edit-btn').addEventListener('click', handleLongPressEdit);
 
@@ -353,9 +354,20 @@ async function renderHome() {
     const regKey = getRegularCalendarKey(dayDate);
     const secKey = getSecondaryCalendarKey(dayDate);
 
+    const weekPeriodOccs = [];
+    reminders.forEach(r => {
+      if (r.routine) {
+        if (isReminderOnDate(r, dayDate)) {
+          getReminderOccurrencesOnDate(r, dayDate).forEach(occ => weekPeriodOccs.push({ r, occ }));
+        }
+      } else {
+        getReminderOccurrencesInWeek(r, startOfWeek).forEach(occ => weekPeriodOccs.push({ r, occ }));
+      }
+    });
+
     const summaryText = showReminderSummary
-      ? (dayReminders.length
-          ? `Reminders (${dayReminders.length}): ${dayReminders.map(r => r.title).join(', ')}`
+      ? (weekPeriodOccs.length
+          ? `Reminders (${weekPeriodOccs.length}): ${weekPeriodOccs.map(({ r, occ }) => `${r.title} [${occ.date}${occ.completed ? ' ✓' : ''}]`).join(', ')}`
           : 'Reminders: None')
       : `Tasks: ${dayTasks.length} | Events: ${dayEvents.length}`;
 
@@ -442,10 +454,35 @@ function renderAgendaSummary(tasks, events, reminders) {
   const weekStart = getStartOfWeek(today, currentWeekOffset);
 
   if (showReminderSummary) {
-    renderAgendaList('agenda-today', reminders.filter(r => isReminderOnDate(r, today)), 'reminder');
-    renderAgendaList('agenda-week', reminders.filter(r => isReminderInWeek(r, weekStart)), 'reminder');
-    renderAgendaList('agenda-month', reminders.filter(r => isReminderInMonth(r, today)), 'reminder');
-    renderAgendaList('agenda-quarter', reminders.filter(r => isReminderInQuarter(r, today)), 'reminder');
+    const todayEntries = [];
+    const weekEntries = [];
+    const monthEntries = [];
+    const quarterEntries = [];
+
+    reminders.forEach(r => {
+      const isRoutine = Boolean(r.routine);
+      const todayOccs = getReminderOccurrencesOnDate(r, today);
+      todayOccs.forEach(occ => {
+        todayEntries.push({ reminder: r, occ });
+      });
+
+      if (isRoutine) {
+        todayOccs.forEach(occ => {
+          weekEntries.push({ reminder: r, occ });
+          monthEntries.push({ reminder: r, occ });
+          quarterEntries.push({ reminder: r, occ });
+        });
+      } else {
+        getReminderOccurrencesInWeek(r, weekStart).forEach(occ => weekEntries.push({ reminder: r, occ }));
+        getReminderOccurrencesInMonth(r, today).forEach(occ => monthEntries.push({ reminder: r, occ }));
+        getReminderOccurrencesInQuarter(r, today).forEach(occ => quarterEntries.push({ reminder: r, occ }));
+      }
+    });
+
+    renderAgendaList('agenda-today', todayEntries, 'reminder');
+    renderAgendaList('agenda-week', weekEntries, 'reminder');
+    renderAgendaList('agenda-month', monthEntries, 'reminder');
+    renderAgendaList('agenda-quarter', quarterEntries, 'reminder');
   } else {
     const todayCombined = [
       ...tasks.filter(t => t.deadline === todayStr).map(t => ({ kind: 'task', item: t })),
@@ -479,9 +516,33 @@ function renderAgendaList(containerId, items, mode = 'tasksEvents') {
     return;
   }
   if (mode === 'reminder') {
-    container.innerHTML = items.map(item => `
-      <div class="agenda-item">• <strong>${escapeHtml(item.title)}</strong> (${escapeHtml(item.aspect || 'Daily')})</div>
-    `).join('');
+    container.innerHTML = '';
+    items.forEach(entry => {
+      const rem = entry.reminder || entry;
+      const occ = entry.occ || { date: '', completed: false };
+      const row = document.createElement('div');
+      row.className = `occurrence-item ${occ.completed ? 'completed' : ''}`;
+
+      const left = document.createElement('label');
+      left.className = 'occurrence-left';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = Boolean(occ.completed);
+      cb.addEventListener('change', (ev) => {
+        ev.stopPropagation();
+        toggleReminderOccurrenceCompletion(rem.id, occ.date);
+      });
+
+      const span = document.createElement('span');
+      span.className = 'occurrence-label';
+      span.innerHTML = `<strong>${escapeHtml(rem.title)}</strong> (${escapeHtml(occ.date || rem.aspect || 'Daily')})${rem.routine ? ' <span class="routine-badge">Routine</span>' : ''}`;
+
+      left.appendChild(cb);
+      left.appendChild(span);
+      row.appendChild(left);
+      container.appendChild(row);
+    });
   } else {
     container.innerHTML = items.map(entry => {
       if (entry.kind === 'task') {
@@ -687,7 +748,170 @@ function isEventInQuarterWithLead(ev, today) {
   return (currentQ === eventQ) || (eDate >= leadStart && eDate <= tDate);
 }
 
-// --- REMINDERS TAB ---
+// --- REMINDERS TAB: Routine Flag, 1-Year / 120-Occurrence Generation & Completion ---
+function generateReminderOccurrences(reminder) {
+  const occurrences = [];
+  const start = parseLocalDate(reminder.startDate);
+  if (!start || Number.isNaN(start.getTime())) return occurrences;
+
+  const endLimit = new Date(start.getFullYear() + 1, start.getMonth(), start.getDate());
+  const maxCount = 120;
+  const interval = Math.max(1, parseInt(reminder.weeksInterval, 10) || 1);
+  const selectedDays = Array.isArray(reminder.days) ? reminder.days : [];
+  const existingMap = new Map();
+  if (Array.isArray(reminder.occurrences)) {
+    reminder.occurrences.forEach(occ => {
+      if (occ && occ.date) existingMap.set(occ.date, Boolean(occ.completed));
+    });
+  }
+
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  while (cursor <= endLimit && occurrences.length < maxCount) {
+    const diffDays = Math.floor((cursor - start) / (1000 * 60 * 60 * 24));
+    const weeksDiff = Math.floor(diffDays / 7);
+    const weekMatches = (weeksDiff % interval) === 0;
+    const dayMatches = selectedDays.length === 0 ? true : selectedDays.includes(cursor.getDay());
+
+    if (weekMatches && dayMatches) {
+      const dateStr = toIsoDateStr(cursor);
+      occurrences.push({
+        date: dateStr,
+        completed: existingMap.has(dateStr) ? existingMap.get(dateStr) : false
+      });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return occurrences;
+}
+
+function getReminderOccurrenceDates(r) {
+  if (Array.isArray(r.occurrences) && r.occurrences.length) {
+    return r.occurrences;
+  }
+  return generateReminderOccurrences(r);
+}
+
+function getReminderOccurrencesOnDate(r, dateObj) {
+  const targetStr = toIsoDateStr(parseLocalDate(dateObj));
+  return getReminderOccurrenceDates(r).filter(occ => occ.date === targetStr);
+}
+
+function isReminderOnDate(r, date) {
+  return getReminderOccurrencesOnDate(r, date).length > 0;
+}
+
+function isReminderInWeek(r, startDate) {
+  const start = parseLocalDate(startDate);
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    if (isReminderOnDate(r, d)) return true;
+  }
+  return false;
+}
+
+function isReminderInMonth(r, targetDate) {
+  const d = parseLocalDate(targetDate);
+  const year = d.getFullYear();
+  const month = d.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  for (let day = 1; day <= daysInMonth; day++) {
+    if (isReminderOnDate(r, new Date(year, month, day))) return true;
+  }
+  return false;
+}
+
+function isReminderInQuarter(r, targetDate) {
+  const d = parseLocalDate(targetDate);
+  const q = Math.floor(d.getMonth() / 3);
+  const startMonth = q * 3;
+  for (let m = startMonth; m < startMonth + 3; m++) {
+    if (isReminderInMonth(r, new Date(d.getFullYear(), m, 1))) return true;
+  }
+  return false;
+}
+
+function getReminderOccurrencesInWeek(r, startDate) {
+  const start = parseLocalDate(startDate);
+  const list = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const dStr = toIsoDateStr(d);
+    getReminderOccurrenceDates(r).forEach(occ => {
+      if (occ.date === dStr) list.push(occ);
+    });
+  }
+  return list;
+}
+
+function getReminderOccurrencesInMonth(r, targetDate) {
+  const d = parseLocalDate(targetDate);
+  const year = d.getFullYear();
+  const month = d.getMonth();
+  return getReminderOccurrenceDates(r).filter(occ => {
+    const od = parseLocalDate(occ.date);
+    return od.getFullYear() === year && od.getMonth() === month;
+  });
+}
+
+function getReminderOccurrencesInQuarter(r, targetDate) {
+  const d = parseLocalDate(targetDate);
+  const year = d.getFullYear();
+  const q = Math.floor(d.getMonth() / 3);
+  return getReminderOccurrenceDates(r).filter(occ => {
+    const od = parseLocalDate(occ.date);
+    return od.getFullYear() === year && Math.floor(od.getMonth() / 3) === q;
+  });
+}
+
+async function toggleReminderOccurrenceCompletion(reminderId, occDate) {
+  const reminders = await getAll('reminders');
+  const rem = reminders.find(item => item.id == reminderId);
+  if (!rem) return;
+
+  const occs = getReminderOccurrenceDates(rem).map(occ =>
+    occ.date === occDate ? { ...occ, completed: !occ.completed } : occ
+  );
+  rem.occurrences = occs;
+  await saveItem('reminders', rem);
+  renderReminders();
+  renderHome();
+}
+
+function getReminderCompletionScoreThroughYesterday(reminder) {
+  const start = parseLocalDate(reminder.startDate);
+  if (!start || Number.isNaN(start.getTime())) return 0;
+
+  const today = getTodayLocal();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (yesterday < start) return 0;
+
+  const yesterdayStr = toIsoDateStr(yesterday);
+  const occs = getReminderOccurrenceDates(reminder).filter(occ => occ.date <= yesterdayStr);
+  if (!occs.length) return 0;
+
+  const completedCount = occs.filter(occ => Boolean(occ.completed)).length;
+  return Math.round((completedCount / occs.length) * 100);
+}
+
+async function duplicateReminderItem(reminder) {
+  const copy = {
+    title: `${reminder.title} (Copy)`,
+    startDate: reminder.startDate,
+    routine: Boolean(reminder.routine),
+    aspect: reminder.aspect || 'Daily',
+    weeksInterval: reminder.weeksInterval || 1,
+    days: Array.isArray(reminder.days) ? [...reminder.days] : [],
+    occurrences: []
+  };
+  copy.occurrences = generateReminderOccurrences(copy);
+  await saveItem('reminders', copy);
+  renderReminders();
+  renderHome();
+}
+
 async function renderReminders() {
   const reminders = await getAll('reminders');
   const setAspects = [...new Set(['Daily', ...reminders.map(r => r.aspect).filter(Boolean), ...customAspects])];
@@ -706,17 +930,15 @@ async function renderReminders() {
   remindersList.innerHTML = '';
 
   filteredReminders.forEach(r => {
-    const daysStr = r.days && r.days.length ? r.days.map(d => ['S','M','T','W','T','F','S'][d]).join(', ') : 'All';
-    const item = document.createElement('div');
-    item.className = 'list-item';
-    item.innerHTML = `
-      <div>
-        <div class="item-title">${escapeHtml(r.title)}</div>
-        <div class="item-details">Start: ${escapeHtml(r.startDate || 'N/A')} | Aspect: ${escapeHtml(r.aspect)} | Every ${r.weeksInterval || 1} wk(s) on: ${daysStr}</div>
-      </div>
+    const scorePct = getReminderCompletionScoreThroughYesterday(r);
+    const row = document.createElement('div');
+    row.className = 'list-item reminder-list-row';
+    row.innerHTML = `
+      <div class="item-title">${escapeHtml(r.title)}</div>
+      <span class="reminder-completion-score">${scorePct}%</span>
     `;
-    addLongPressHandler(item, () => openActionModal('reminders', r));
-    remindersList.appendChild(item);
+    addLongPressHandler(row, () => openActionModal('reminders', r));
+    remindersList.appendChild(row);
   });
 }
 
@@ -738,13 +960,26 @@ async function handleReminderSubmit(e) {
   e.preventDefault();
   const id = document.getElementById('reminder-id').value;
   const selectedDays = Array.from(document.querySelectorAll('.day-chip.selected')).map(chip => parseInt(chip.dataset.day, 10));
+  const isRoutine = Boolean(document.getElementById('reminder-routine')?.checked);
+
+  let existingOccurrences = [];
+  if (id) {
+    const existingAll = await getAll('reminders');
+    const found = existingAll.find(item => item.id == parseInt(id, 10));
+    if (found && Array.isArray(found.occurrences)) existingOccurrences = found.occurrences;
+  }
+
   const reminder = {
     title: document.getElementById('reminder-title').value,
     startDate: document.getElementById('reminder-start-date').value,
+    routine: isRoutine,
     aspect: document.getElementById('reminder-aspect').value || 'Daily',
     weeksInterval: parseInt(document.getElementById('reminder-weeks-interval').value, 10) || 1,
-    days: selectedDays
+    days: selectedDays,
+    occurrences: existingOccurrences
   };
+  reminder.occurrences = generateReminderOccurrences(reminder);
+
   if (id) reminder.id = parseInt(id, 10);
   await saveItem('reminders', reminder);
   document.getElementById('reminder-form').reset();
@@ -752,22 +987,6 @@ async function handleReminderSubmit(e) {
   document.getElementById('reminder-id').value = '';
   renderReminders();
   renderHome();
-}
-
-function isReminderOnDate(r, date) {
-  const target = parseLocalDate(date);
-  if (r.startDate) {
-    const start = parseLocalDate(r.startDate);
-    if (target < start) return false;
-    const interval = Math.max(1, parseInt(r.weeksInterval, 10) || 1);
-    if (interval > 1) {
-      const diffDays = Math.floor((target - start) / (1000 * 60 * 60 * 24));
-      const weeksDiff = Math.floor(diffDays / 7);
-      if (weeksDiff % interval !== 0) return false;
-    }
-  }
-  if (!r.days || r.days.length === 0) return true;
-  return r.days.includes(target.getDay());
 }
 
 // --- PEOPLE TAB ---
@@ -1067,7 +1286,21 @@ function openActionModal(storeName, item) {
   selectedLongPressItem = { storeName, item };
   const label = storeName === 'dayLogs' ? 'log entry' : storeName.slice(0, -1);
   document.getElementById('action-modal-title').textContent = `Manage ${label}`;
+  const dupBtn = document.getElementById('action-duplicate-btn');
+  if (dupBtn) {
+    dupBtn.classList.toggle('hidden', storeName !== 'reminders');
+  }
   document.getElementById('action-modal').classList.remove('hidden');
+}
+
+async function handleLongPressDuplicate() {
+  if (!selectedLongPressItem) return;
+  const { storeName, item } = selectedLongPressItem;
+  document.getElementById('action-modal').classList.add('hidden');
+  selectedLongPressItem = null;
+  if (storeName === 'reminders') {
+    await duplicateReminderItem(item);
+  }
 }
 
 async function handleLongPressDelete() {
@@ -1132,6 +1365,8 @@ function editItem(storeName, item) {
     document.getElementById('reminder-id').value = item.id;
     document.getElementById('reminder-title').value = item.title;
     document.getElementById('reminder-start-date').value = item.startDate || '';
+    const routineCb = document.getElementById('reminder-routine');
+    if (routineCb) routineCb.checked = Boolean(item.routine);
     document.getElementById('reminder-aspect').value = item.aspect;
     document.getElementById('reminder-weeks-interval').value = item.weeksInterval || 1;
     const activeDays = Array.isArray(item.days) ? item.days : [];
