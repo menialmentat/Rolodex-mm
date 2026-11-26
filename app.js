@@ -1,6 +1,7 @@
-// Rolodex PWA - Version 3 Updated Codebase
+// Rolodex PWA - Version 4 Codebase
 const DB_NAME = 'RolodexDB';
 const DB_VERSION = 2;
+const BACKUP_FILENAME = 'rolodex_backup.json';
 let db = null;
 
 let activeTab = 'home';
@@ -14,6 +15,11 @@ let customProjects = ['Default Tasks'];
 let customAspects = ['Daily'];
 let editingLogContext = null;
 let editingPersonPhoto = null;
+let peopleSearchQuery = '';
+let journalSelectedDateStr = null;
+let journalSelectedLabels = [];
+let journalSearchQuery = '';
+let backupDirHandle = null;
 
 function parseLocalDate(dateStr) {
   if (!dateStr) return null;
@@ -33,6 +39,11 @@ function toIsoDateStr(dateObj) {
   const m = String(dateObj.getMonth() + 1).padStart(2, '0');
   const d = String(dateObj.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+function getTodayLocal() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 // Secondary Calendar Helper (Anchored to October 16, 1991) -> WW-QQ-MM-YY
@@ -116,6 +127,24 @@ function getAll(storeName) {
   });
 }
 
+function getMeta(key) {
+  return new Promise((resolve) => {
+    if (!db || !db.objectStoreNames.contains('meta')) return resolve(null);
+    const tx = db.transaction('meta', 'readonly');
+    const req = tx.objectStore('meta').get(key);
+    req.onsuccess = () => resolve(req.result ? req.result.value : null);
+  });
+}
+
+function setMeta(key, value) {
+  return new Promise((resolve) => {
+    if (!db || !db.objectStoreNames.contains('meta')) return resolve();
+    const tx = db.transaction('meta', 'readwrite');
+    const req = tx.objectStore('meta').put({ key, value });
+    req.onsuccess = () => resolve();
+  });
+}
+
 function saveItem(storeName, item) {
   return new Promise((resolve) => {
     if (item.date) {
@@ -137,10 +166,12 @@ function deleteItem(storeName, id) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  journalSelectedDateStr = toIsoDateStr(getTodayLocal());
   await initDB();
   registerServiceWorker();
   setupTabNavigation();
   setupEventListeners();
+  await initBackupSystem();
   renderAll();
 });
 
@@ -151,16 +182,19 @@ function registerServiceWorker() {
 }
 
 function setupEventListeners() {
-  document.getElementById('settings-btn').addEventListener('click', () => {
+  document.getElementById('settings-btn').addEventListener('click', async () => {
     renderSettingsDropdowns();
+    await refreshBackupStatusUI();
     document.getElementById('settings-modal').classList.remove('hidden');
   });
   document.getElementById('close-settings-modal').addEventListener('click', () => {
     document.getElementById('settings-modal').classList.add('hidden');
   });
 
-  document.getElementById('export-data-btn').addEventListener('click', exportData);
-  document.getElementById('import-data-btn').addEventListener('click', importData);
+  document.getElementById('select-backup-folder-btn').addEventListener('click', selectBackupFolder);
+  document.getElementById('push-backup-btn').addEventListener('click', () => pushBackupToFolder(false));
+  document.getElementById('update-from-backup-btn').addEventListener('click', updateDataFromBackup);
+  document.getElementById('fallback-backup-file-input').addEventListener('change', handleFallbackBackupFileSelected);
 
   document.querySelectorAll('.sample-btn').forEach(btn => {
     btn.addEventListener('click', (e) => downloadSample(e.target.dataset.type));
@@ -196,10 +230,59 @@ function setupEventListeners() {
   document.getElementById('add-phone-btn').addEventListener('click', () => addDynamicField('phones-container', 'phone', ''));
   document.getElementById('add-email-btn').addEventListener('click', () => addDynamicField('emails-container', 'email', ''));
   document.getElementById('add-relationship-btn').addEventListener('click', () => addRelationshipField());
+  document.getElementById('person-photo-input').addEventListener('change', handlePersonPhotoInputChange);
   document.getElementById('person-form').addEventListener('submit', handlePersonSubmit);
   document.getElementById('close-person-modal').addEventListener('click', () => {
     document.getElementById('person-details-modal').classList.add('hidden');
   });
+
+  const peopleSearch = document.getElementById('people-search-input');
+  if (peopleSearch) {
+    peopleSearch.addEventListener('input', (e) => {
+      peopleSearchQuery = e.target.value.trim().toLowerCase();
+      renderPeople();
+    });
+  }
+
+  document.getElementById('close-photo-viewer-modal').addEventListener('click', () => {
+    document.getElementById('photo-viewer-modal').classList.add('hidden');
+  });
+
+  const jDatePicker = document.getElementById('journal-date-picker');
+  if (jDatePicker) {
+    jDatePicker.addEventListener('change', (e) => {
+      if (e.target.value) {
+        journalSelectedDateStr = e.target.value;
+        renderJournal();
+      }
+    });
+  }
+
+  const jSearchToggle = document.getElementById('journal-search-toggle-btn');
+  if (jSearchToggle) {
+    jSearchToggle.addEventListener('click', () => {
+      const box = document.getElementById('journal-search-box');
+      if (!box) return;
+      box.classList.toggle('hidden');
+      if (!box.classList.contains('hidden')) {
+        const inp = document.getElementById('journal-search-input');
+        if (inp) inp.focus();
+      } else {
+        journalSearchQuery = '';
+        const inp = document.getElementById('journal-search-input');
+        if (inp) inp.value = '';
+        renderJournal();
+      }
+    });
+  }
+
+  const jSearchInput = document.getElementById('journal-search-input');
+  if (jSearchInput) {
+    jSearchInput.addEventListener('input', (e) => {
+      journalSearchQuery = e.target.value.trim().toLowerCase();
+      renderJournal();
+    });
+  }
 
   document.getElementById('settings-delete-project-btn').addEventListener('click', deleteSelectedProject);
   document.getElementById('settings-delete-aspect-btn').addEventListener('click', deleteSelectedAspect);
@@ -234,8 +317,10 @@ function renderAll() {
   renderEvents();
   renderReminders();
   renderPeople();
+  renderJournal();
 }
 
+// --- HOME TAB: Exclusive Toggle (Tasks+Events vs Reminders) ---
 async function renderHome() {
   const tasks = await getAll('tasks');
   const events = await getAll('events');
@@ -243,8 +328,7 @@ async function renderHome() {
 
   renderAgendaSummary(tasks, events, reminders);
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = getTodayLocal();
   const startOfWeek = getStartOfWeek(today, currentWeekOffset);
   const weekDaysContainer = document.getElementById('week-days-container');
   weekDaysContainer.innerHTML = '';
@@ -263,7 +347,7 @@ async function renderHome() {
     const isToday = dayDate.getTime() === today.getTime();
 
     const dayTasks = tasks.filter(t => t.deadline === dateStr);
-    const dayEvents = events.filter(e => isEventOnDate(e, dayDate));
+    const dayEvents = events.filter(ev => isEventOnDate(ev, dayDate));
     const dayReminders = reminders.filter(r => isReminderOnDate(r, dayDate));
 
     const regKey = getRegularCalendarKey(dayDate);
@@ -273,7 +357,7 @@ async function renderHome() {
       ? (dayReminders.length
           ? `Reminders (${dayReminders.length}): ${dayReminders.map(r => r.title).join(', ')}`
           : 'Reminders: None')
-      : `Tasks: ${dayTasks.length} | Events: ${dayEvents.length} | Reminders: ${dayReminders.length}`;
+      : `Tasks: ${dayTasks.length} | Events: ${dayEvents.length}`;
 
     const row = document.createElement('div');
     row.className = `day-row-container ${isToday ? 'today-highlight' : ''}`;
@@ -328,9 +412,33 @@ function isReminderInQuarter(r, targetDate) {
   return false;
 }
 
+function isTaskInWeek(t, startDate) {
+  const start = parseLocalDate(startDate);
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    if (t.deadline === toIsoDateStr(d)) return true;
+  }
+  return false;
+}
+
+function isTaskInMonth(t, targetDate) {
+  if (!t.deadline) return false;
+  const d = parseLocalDate(t.deadline);
+  const ref = parseLocalDate(targetDate);
+  return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
+}
+
+function isTaskInQuarter(t, targetDate) {
+  if (!t.deadline) return false;
+  const d = parseLocalDate(t.deadline);
+  const ref = parseLocalDate(targetDate);
+  return d.getFullYear() === ref.getFullYear() && Math.floor(d.getMonth() / 3) === Math.floor(ref.getMonth() / 3);
+}
+
 function renderAgendaSummary(tasks, events, reminders) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = getTodayLocal();
+  const todayStr = toIsoDateStr(today);
   const weekStart = getStartOfWeek(today, currentWeekOffset);
 
   if (showReminderSummary) {
@@ -339,30 +447,62 @@ function renderAgendaSummary(tasks, events, reminders) {
     renderAgendaList('agenda-month', reminders.filter(r => isReminderInMonth(r, today)), 'reminder');
     renderAgendaList('agenda-quarter', reminders.filter(r => isReminderInQuarter(r, today)), 'reminder');
   } else {
-    renderAgendaList('agenda-today', events.filter(e => isEventOnDate(e, today)), 'event');
-    renderAgendaList('agenda-week', events.filter(e => isEventInWeek(e, today)), 'event');
-    renderAgendaList('agenda-month', events.filter(e => isEventInMonth(e, today)), 'event');
-    renderAgendaList('agenda-quarter', events.filter(e => isEventInQuarter(e, today)), 'event');
+    const todayCombined = [
+      ...tasks.filter(t => t.deadline === todayStr).map(t => ({ kind: 'task', item: t })),
+      ...events.filter(ev => isEventOnDate(ev, today)).map(ev => ({ kind: 'event', item: ev }))
+    ];
+    const weekCombined = [
+      ...tasks.filter(t => isTaskInWeek(t, weekStart)).map(t => ({ kind: 'task', item: t })),
+      ...events.filter(ev => isEventInWeek(ev, today)).map(ev => ({ kind: 'event', item: ev }))
+    ];
+    const monthCombined = [
+      ...tasks.filter(t => isTaskInMonth(t, today)).map(t => ({ kind: 'task', item: t })),
+      ...events.filter(ev => isEventInMonth(ev, today)).map(ev => ({ kind: 'event', item: ev }))
+    ];
+    const quarterCombined = [
+      ...tasks.filter(t => isTaskInQuarter(t, today)).map(t => ({ kind: 'task', item: t })),
+      ...events.filter(ev => isEventInQuarter(ev, today)).map(ev => ({ kind: 'event', item: ev }))
+    ];
+
+    renderAgendaList('agenda-today', todayCombined, 'tasksEvents');
+    renderAgendaList('agenda-week', weekCombined, 'tasksEvents');
+    renderAgendaList('agenda-month', monthCombined, 'tasksEvents');
+    renderAgendaList('agenda-quarter', quarterCombined, 'tasksEvents');
   }
 }
 
-function renderAgendaList(containerId, items, mode = 'event') {
+function renderAgendaList(containerId, items, mode = 'tasksEvents') {
   const container = document.getElementById(containerId);
   if (items.length === 0) {
-    container.innerHTML = `<div class="agenda-item text-muted">No ${mode}s</div>`;
+    const emptyText = mode === 'reminder' ? 'No reminders' : 'No tasks or events';
+    container.innerHTML = `<div class="agenda-item text-muted">${emptyText}</div>`;
     return;
   }
   if (mode === 'reminder') {
     container.innerHTML = items.map(item => `
-      <div class="agenda-item">• <strong>${item.title}</strong> (${item.aspect || 'Daily'})</div>
+      <div class="agenda-item">• <strong>${escapeHtml(item.title)}</strong> (${escapeHtml(item.aspect || 'Daily')})</div>
     `).join('');
   } else {
-    container.innerHTML = items.map(item => `
-      <div class="agenda-item">• <strong>${item.type}</strong>: ${item.persons ? item.persons.join(', ') : 'Event'} (${item.date})</div>
-    `).join('');
+    container.innerHTML = items.map(entry => {
+      if (entry.kind === 'task') {
+        return `<div class="agenda-item">• <strong>Task</strong>: ${escapeHtml(entry.item.title)} (${escapeHtml(entry.item.deadline || '')})</div>`;
+      }
+      const ev = entry.item;
+      const peopleText = ev.persons && ev.persons.length ? ev.persons.join(', ') : 'Event';
+      return `<div class="agenda-item">• <strong>${escapeHtml(ev.type)}</strong>: ${escapeHtml(peopleText)} (${escapeHtml(ev.date || '')})</div>`;
+    }).join('');
   }
 }
 
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// --- TASKS TAB ---
 async function renderTasks() {
   const tasks = await getAll('tasks');
   const people = await getAll('people');
@@ -373,11 +513,11 @@ async function renderTasks() {
 
   const chipsContainer = document.getElementById('project-chips');
   chipsContainer.innerHTML = ['All', ...customProjects].map(p => `
-    <div class="chip ${currentProject === p ? 'active' : ''}" onclick="selectProject('${p.replace(/'/g, "\'")}')">${p}</div>
+    <div class="chip ${currentProject === p ? 'active' : ''}" onclick="selectProject('${p.replace(/'/g, "\'")}')">${escapeHtml(p)}</div>
   `).join('');
 
   const projectSelect = document.getElementById('task-project');
-  projectSelect.innerHTML = customProjects.map(p => `<option value="${p}">${p}</option>`).join('');
+  projectSelect.innerHTML = customProjects.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
 
   const filteredTasks = currentProject === 'All' ? tasks : tasks.filter(t => t.project === currentProject);
   const tasksList = document.getElementById('tasks-list');
@@ -389,8 +529,8 @@ async function renderTasks() {
     item.className = `list-item ${t.completed ? 'completed' : ''}`;
     item.innerHTML = `
       <div>
-        <div class="item-title">${t.title}</div>
-        <div class="item-details">Project: ${t.project} | Assigned: ${person ? person.name : 'None'} | Deadline: ${t.deadline}</div>
+        <div class="item-title">${escapeHtml(t.title)}</div>
+        <div class="item-details">Project: ${escapeHtml(t.project)} | Assigned: ${person ? escapeHtml(person.name) : 'None'} | Deadline: ${escapeHtml(t.deadline)}</div>
       </div>
     `;
 
@@ -443,6 +583,7 @@ async function handleTaskSubmit(e) {
   document.getElementById('task-assigned').value = '';
   document.getElementById('task-assigned-search').value = '';
   renderTasks();
+  renderHome();
 }
 
 function selectProject(p) {
@@ -459,13 +600,14 @@ function addProjectPrompt() {
   }
 }
 
+// --- EVENTS TAB ---
 async function renderEvents() {
   const events = await getAll('events');
   const people = await getAll('people');
   window.cachedPeople = people;
 
-  const now = new Date();
-  const currentQuarterEvents = events.filter(e => isEventInQuarterWithLead(e, now));
+  const now = getTodayLocal();
+  const currentQuarterEvents = events.filter(ev => isEventInQuarterWithLead(ev, now));
 
   const eventsList = document.getElementById('events-list');
   eventsList.innerHTML = '';
@@ -475,8 +617,8 @@ async function renderEvents() {
     item.className = 'list-item';
     item.innerHTML = `
       <div>
-        <div class="item-title">${ev.type} - ${ev.persons ? ev.persons.join(', ') : 'Event'}</div>
-        <div class="item-details">Recurring Date: ${ev.date}</div>
+        <div class="item-title">${escapeHtml(ev.type)} - ${ev.persons && ev.persons.length ? escapeHtml(ev.persons.join(', ')) : 'Event'}</div>
+        <div class="item-details">Recurring Date: ${escapeHtml(ev.date)}</div>
       </div>
     `;
     addLongPressHandler(item, () => openActionModal('events', ev));
@@ -545,6 +687,7 @@ function isEventInQuarterWithLead(ev, today) {
   return (currentQ === eventQ) || (eDate >= leadStart && eDate <= tDate);
 }
 
+// --- REMINDERS TAB ---
 async function renderReminders() {
   const reminders = await getAll('reminders');
   const setAspects = [...new Set(['Daily', ...reminders.map(r => r.aspect).filter(Boolean), ...customAspects])];
@@ -552,11 +695,11 @@ async function renderReminders() {
 
   const chipsContainer = document.getElementById('aspect-chips');
   chipsContainer.innerHTML = customAspects.map(a => `
-    <div class="chip ${currentAspect === a ? 'active' : ''}" onclick="selectAspect('${a.replace(/'/g, "\'")}')">${a}</div>
+    <div class="chip ${currentAspect === a ? 'active' : ''}" onclick="selectAspect('${a.replace(/'/g, "\'")}')">${escapeHtml(a)}</div>
   `).join('');
 
   const aspectSelect = document.getElementById('reminder-aspect');
-  aspectSelect.innerHTML = customAspects.map(a => `<option value="${a}">${a}</option>`).join('');
+  aspectSelect.innerHTML = customAspects.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
 
   const filteredReminders = reminders.filter(r => r.aspect === currentAspect);
   const remindersList = document.getElementById('reminders-list');
@@ -568,8 +711,8 @@ async function renderReminders() {
     item.className = 'list-item';
     item.innerHTML = `
       <div>
-        <div class="item-title">${r.title}</div>
-        <div class="item-details">Start: ${r.startDate || 'N/A'} | Aspect: ${r.aspect} | Every ${r.weeksInterval || 1} wk(s) on: ${daysStr}</div>
+        <div class="item-title">${escapeHtml(r.title)}</div>
+        <div class="item-details">Start: ${escapeHtml(r.startDate || 'N/A')} | Aspect: ${escapeHtml(r.aspect)} | Every ${r.weeksInterval || 1} wk(s) on: ${daysStr}</div>
       </div>
     `;
     addLongPressHandler(item, () => openActionModal('reminders', r));
@@ -608,6 +751,7 @@ async function handleReminderSubmit(e) {
   document.querySelectorAll('.day-chip').forEach(c => c.classList.remove('selected'));
   document.getElementById('reminder-id').value = '';
   renderReminders();
+  renderHome();
 }
 
 function isReminderOnDate(r, date) {
@@ -626,28 +770,85 @@ function isReminderOnDate(r, date) {
   return r.days.includes(target.getDay());
 }
 
+// --- PEOPLE TAB ---
+function openFullPhotoModal(src, title = 'Photo') {
+  if (!src) return;
+  document.getElementById('photo-viewer-title').textContent = title;
+  document.getElementById('photo-viewer-img').src = src;
+  document.getElementById('photo-viewer-modal').classList.remove('hidden');
+}
+
+async function handlePersonPhotoInputChange(e) {
+  const preview = document.getElementById('person-photo-preview');
+  const file = e.target.files && e.target.files[0];
+  if (file) {
+    const dataUrl = await readAsDataURL(file);
+    preview.innerHTML = `<img src="${dataUrl}" alt="Photo preview" onclick="openFullPhotoModal('${dataUrl.replace(/'/g, "\'")}', 'Photo Preview')">`;
+  } else if (editingPersonPhoto) {
+    preview.innerHTML = `<img src="${editingPersonPhoto}" alt="Photo preview" onclick="openFullPhotoModal('${editingPersonPhoto.replace(/'/g, "\'")}', 'Photo Preview')">`;
+  } else {
+    preview.innerHTML = '';
+  }
+}
+
 async function renderPeople() {
   const people = await getAll('people');
   const tasks = await getAll('tasks');
   const events = await getAll('events');
 
-  people.sort((a, b) => a.name.localeCompare(b.name));
+  const q = peopleSearchQuery;
+  const filteredPeople = q
+    ? people.filter(p => {
+        const inName = (p.name || '').toLowerCase().includes(q);
+        const inCode = (p.code || '').toLowerCase().includes(q);
+        const inPhones = Array.isArray(p.phones) && p.phones.some(ph => String(ph).toLowerCase().includes(q));
+        const inEmails = Array.isArray(p.emails) && p.emails.some(em => String(em).toLowerCase().includes(q));
+        return inName || inCode || inPhones || inEmails;
+      })
+    : [...people];
+
+  filteredPeople.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
   const peopleList = document.getElementById('people-list');
   peopleList.innerHTML = '';
 
-  people.forEach(p => {
+  if (!filteredPeople.length) {
+    peopleList.innerHTML = `<div class="text-muted" style="font-size:13px;">${q ? 'No matching people found.' : 'No contacts added yet.'}</div>`;
+    window.cachedPeople = people;
+    return;
+  }
+
+  filteredPeople.forEach(p => {
     const item = document.createElement('div');
     item.className = 'list-item';
-    item.innerHTML = `
-      <div class="person-card-header">
-        ${p.photo ? `<img src="${p.photo}" class="photo-avatar" alt="${p.name}">` : `<div class="photo-avatar">👤</div>`}
-        <div>
-          <div class="item-title">${p.name} (${p.code})</div>
-        </div>
-      </div>
-    `;
 
+    const header = document.createElement('div');
+    header.className = 'person-card-header';
+
+    if (p.photo) {
+      const img = document.createElement('img');
+      img.src = p.photo;
+      img.className = 'photo-avatar clickable-photo';
+      img.alt = p.name;
+      img.title = 'View full photo';
+      img.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openFullPhotoModal(p.photo, `${p.name} (${p.code})`);
+      });
+      header.appendChild(img);
+    } else {
+      const avatar = document.createElement('div');
+      avatar.className = 'photo-avatar';
+      avatar.textContent = '👤';
+      header.appendChild(avatar);
+    }
+
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'item-title';
+    titleDiv.textContent = `${p.name} (${p.code})`;
+    header.appendChild(titleDiv);
+
+    item.appendChild(header);
     item.addEventListener('click', () => showPersonDetails(p, people, tasks, events));
     addLongPressHandler(item, () => openActionModal('people', p));
     peopleList.appendChild(item);
@@ -661,7 +862,7 @@ function addDynamicField(containerId, name, value = '') {
   const row = document.createElement('div');
   row.className = 'dynamic-row';
   row.innerHTML = `
-    <input type="text" name="${name}" value="${value}" placeholder="Enter ${name}...">
+    <input type="text" name="${name}" value="${escapeHtml(value)}" placeholder="Enter ${name}...">
     <button type="button" class="btn-sm" onclick="this.parentElement.remove()">X</button>
   `;
   container.appendChild(row);
@@ -675,9 +876,9 @@ function addRelationshipField(targetId = '', relName = '') {
   row.innerHTML = `
     <select name="rel-target">
       <option value="">Select Person</option>
-      ${people.map(p => `<option value="${p.id}" ${p.id == targetId ? 'selected' : ''}>${p.name}</option>`).join('')}
+      ${people.map(p => `<option value="${p.id}" ${p.id == targetId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
     </select>
-    <input type="text" name="rel-name" value="${relName}" placeholder="Relationship (e.g. Spouse)">
+    <input type="text" name="rel-name" value="${escapeHtml(relName)}" placeholder="Relationship (e.g. Spouse)">
     <button type="button" class="btn-sm" onclick="this.parentElement.remove()">X</button>
   `;
   container.appendChild(row);
@@ -699,21 +900,21 @@ async function handlePersonSubmit(e) {
     photoData = await readAsDataURL(photoInput.files[0]);
   }
 
-  const phones = Array.from(document.querySelectorAll('input[name="phone"]')).map(i => i.value).filter(Boolean);
-  const emails = Array.from(document.querySelectorAll('input[name="email"]')).map(i => i.value).filter(Boolean);
+  const phones = Array.from(document.querySelectorAll('input[name="phone"]')).map(i => i.value.trim()).filter(Boolean);
+  const emails = Array.from(document.querySelectorAll('input[name="email"]')).map(i => i.value.trim()).filter(Boolean);
 
   const relTargets = document.querySelectorAll('select[name="rel-target"]');
   const relNames = document.querySelectorAll('input[name="rel-name"]');
   const relationships = [];
   relTargets.forEach((sel, idx) => {
     if (sel.value) {
-      relationships.push({ targetId: sel.value, relName: relNames[idx].value || 'Related' });
+      relationships.push({ targetId: sel.value, relName: relNames[idx].value.trim() || 'Related' });
     }
   });
 
   const person = {
     code,
-    name: document.getElementById('person-name').value,
+    name: document.getElementById('person-name').value.trim(),
     photo: photoData,
     phones,
     emails,
@@ -728,6 +929,7 @@ async function handlePersonSubmit(e) {
   document.getElementById('person-form').reset();
   document.getElementById('person-id').value = '';
   document.getElementById('person-serial-code').value = '';
+  document.getElementById('person-photo-preview').innerHTML = '';
   document.getElementById('phones-container').innerHTML = '';
   document.getElementById('emails-container').innerHTML = '';
   document.getElementById('relationships-container').innerHTML = '';
@@ -767,38 +969,53 @@ function showPersonDetails(p, allPeople, tasks, events) {
   if (p.relationships && p.relationships.length) {
     relHtml = p.relationships.map(r => {
       const target = allPeople.find(ap => ap.id == r.targetId);
-      return target ? `<p>• ${r.relName}: <span class="rel-link" onclick="openLinkedPerson(${target.id})">${target.name}</span></p>` : '';
+      return target ? `<p>• ${escapeHtml(r.relName)}: <span class="rel-link" onclick="openLinkedPerson(${target.id})">${escapeHtml(target.name)}</span></p>` : '';
     }).join('');
   } else {
     relHtml = '<p class="text-muted">None</p>';
   }
 
+  const phonesHtml = p.phones && p.phones.length
+    ? p.phones.map(ph => {
+        const cleanTel = String(ph).replace(/[^+\d]/g, '');
+        return `<p>• <a href="tel:${encodeURIComponent(cleanTel)}" class="contact-link">${escapeHtml(ph)}</a></p>`;
+      }).join('')
+    : '<p class="text-muted">None</p>';
+
+  const emailsHtml = p.emails && p.emails.length
+    ? p.emails.map(em => `<p>• <a href="mailto:${encodeURIComponent(String(em).trim())}" class="contact-link">${escapeHtml(em)}</a></p>`).join('')
+    : '<p class="text-muted">None</p>';
+
+  const photoHtml = p.photo
+    ? `<img src="${p.photo}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;" class="clickable-photo" alt="${escapeHtml(p.name)}" title="Tap for full image" onclick="openFullPhotoModal('${p.photo.replace(/'/g, "\'")}', '${escapeHtml(p.name).replace(/'/g, "\'")} (${escapeHtml(p.code)})')">`
+    : `<div style="font-size:40px;">👤</div>`;
+
   body.innerHTML = `
     <div style="text-align:center; margin-bottom:12px;">
-      ${p.photo ? `<img src="${p.photo}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" alt="${p.name}">` : `<div style="font-size:40px;">👤</div>`}
-      <h2>${p.name} (${p.code})</h2>
+      ${photoHtml}
+      <h2>${escapeHtml(p.name)} (${escapeHtml(p.code)})</h2>
     </div>
     <h4>Phone Numbers</h4>
-    ${p.phones && p.phones.length ? p.phones.map(ph => `<p>• ${ph}</p>`).join('') : '<p class="text-muted">None</p>'}
+    ${phonesHtml}
 
     <h4 style="margin-top:8px;">Email Addresses</h4>
-    ${p.emails && p.emails.length ? p.emails.map(em => `<p>• ${em}</p>`).join('') : '<p class="text-muted">None</p>'}
+    ${emailsHtml}
 
     <h4 style="margin-top:8px;">Relationships</h4>
     ${relHtml}
 
     <h4 style="margin-top:8px;">Associated Tasks</h4>
-    ${personTasks.length ? personTasks.map(t => `<p>• ${t.title} (${t.deadline})</p>`).join('') : '<p class="text-muted">None</p>'}
+    ${personTasks.length ? personTasks.map(t => `<p>• ${escapeHtml(t.title)} (${escapeHtml(t.deadline)})</p>`).join('') : '<p class="text-muted">None</p>'}
 
     <h4 style="margin-top:8px;">Associated Events</h4>
-    ${personEvents.length ? personEvents.map(ev => `<p>• ${ev.type} (${ev.date})</p>`).join('') : '<p class="text-muted">None</p>'}
+    ${personEvents.length ? personEvents.map(ev => `<p>• ${escapeHtml(ev.type)} (${escapeHtml(ev.date)})</p>`).join('') : '<p class="text-muted">None</p>'}
 
     <h4 style="margin-top:8px;">Notes</h4>
-    <p>${p.notes || 'No notes added.'}</p>
+    <p>${escapeHtml(p.notes || 'No notes added.')}</p>
 
     <div style="margin-top:16px; display:flex; gap:8px;">
-      <button class="btn btn-primary" onclick="editPersonFromDetails(${p.id})">Edit Person</button>
-      <button class="btn btn-danger" onclick="deletePersonFromDetails(${p.id})">Delete</button>
+      <button type="button" class="btn btn-primary" onclick="editPersonFromDetails(${p.id})">Edit Person</button>
+      <button type="button" class="btn btn-danger" onclick="deletePersonFromDetails(${p.id})">Delete</button>
     </div>
   `;
   modal.classList.remove('hidden');
@@ -829,6 +1046,7 @@ async function deletePersonFromDetails(id) {
   }
 }
 
+// --- LONG PRESS & EDIT / DELETE ---
 function addLongPressHandler(element, callback) {
   let timer;
   element.addEventListener('touchstart', (e) => {
@@ -861,9 +1079,12 @@ async function handleLongPressDelete() {
     const entries = normalizeDayLogEntries(existing).filter(entry => entry.id !== item.id);
     const secDateKey = getSecondaryCalendarKey(parseLocalDate(item.date));
     await putDayLogRecord({ date: item.date, secDateKey, entries });
-    renderDayLogEntriesList(item.date, entries);
+    if (document.getElementById('day-log-entries-list')) {
+      renderDayLogEntriesList(item.date, entries);
+    }
     document.getElementById('action-modal').classList.add('hidden');
     selectedLongPressItem = null;
+    renderJournal();
     return;
   }
 
@@ -879,7 +1100,11 @@ function handleLongPressEdit() {
   document.getElementById('action-modal').classList.add('hidden');
 
   if (storeName === 'dayLogs') {
-    openNewDayLogInput(item.text, item.id, item.date);
+    if (activeTab === 'journal') {
+      journalSelectedDateStr = item.date;
+      renderJournal();
+    }
+    openNewDayLogInput(item.text, item.id, item.date, item.label || '');
     return;
   }
 
@@ -920,6 +1145,10 @@ function editItem(storeName, item) {
     document.getElementById('person-serial-code').value = item.code;
     document.getElementById('person-name').value = item.name;
     document.getElementById('person-notes').value = item.notes || '';
+    const preview = document.getElementById('person-photo-preview');
+    preview.innerHTML = item.photo
+      ? `<img src="${item.photo}" alt="Photo preview" onclick="openFullPhotoModal('${item.photo.replace(/'/g, "\'")}', '${escapeHtml(item.name).replace(/'/g, "\'")}')">`
+      : '';
 
     const pContainer = document.getElementById('phones-container');
     pContainer.innerHTML = '';
@@ -935,12 +1164,13 @@ function editItem(storeName, item) {
   }
 }
 
+// --- SETTINGS & FOLDER AUTO/MANUAL BACKUP ---
 function renderSettingsDropdowns() {
   const pSelect = document.getElementById('settings-delete-project-select');
-  pSelect.innerHTML = customProjects.filter(p => p !== 'Default Tasks').map(p => `<option value="${p}">${p}</option>`).join('') || '<option value="">No custom projects</option>';
+  pSelect.innerHTML = customProjects.filter(p => p !== 'Default Tasks').map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('') || '<option value="">No custom projects</option>';
 
   const aSelect = document.getElementById('settings-delete-aspect-select');
-  aSelect.innerHTML = customAspects.filter(a => a !== 'Daily').map(a => `<option value="${a}">${a}</option>`).join('') || '<option value="">No custom aspects</option>';
+  aSelect.innerHTML = customAspects.filter(a => a !== 'Daily').map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('') || '<option value="">No custom aspects</option>';
 }
 
 function deleteSelectedProject() {
@@ -965,53 +1195,181 @@ function deleteSelectedAspect() {
   }
 }
 
-async function exportData() {
-  const target = document.getElementById('export-tab-select').value;
-  const data = {};
-  if (target === 'all') {
-    data.tasks = await getAll('tasks');
-    data.events = await getAll('events');
-    data.reminders = await getAll('reminders');
-    data.people = await getAll('people');
-  } else {
-    data[target] = await getAll(target);
-  }
-
-  const jsonStr = JSON.stringify(data, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `rolodex_backup_${target}_${toIsoDateStr(new Date())}.json`;
-  a.click();
+async function buildFullBackupPayload() {
+  return {
+    version: DB_VERSION,
+    exportedAt: new Date().toISOString(),
+    customProjects,
+    customAspects,
+    tasks: await getAll('tasks'),
+    events: await getAll('events'),
+    reminders: await getAll('reminders'),
+    people: await getAll('people'),
+    dayLogs: await getAll('dayLogs')
+  };
 }
 
-async function importData() {
-  const target = document.getElementById('import-tab-select').value;
-  const fileInput = document.getElementById('import-file-input');
-  if (!fileInput.files.length) {
-    alert('Please select a JSON file to import.');
-    return;
+async function applyBackupPayload(data) {
+  if (!data || typeof data !== 'object') throw new Error('Invalid backup data');
+  if (Array.isArray(data.customProjects) && data.customProjects.length) {
+    customProjects = [...new Set(['Default Tasks', ...data.customProjects])];
+  }
+  if (Array.isArray(data.customAspects) && data.customAspects.length) {
+    customAspects = [...new Set(['Daily', ...data.customAspects])];
+  }
+  if (Array.isArray(data.tasks)) {
+    for (const item of data.tasks) await saveItem('tasks', item);
+  }
+  if (Array.isArray(data.events)) {
+    for (const item of data.events) await saveItem('events', item);
+  }
+  if (Array.isArray(data.reminders)) {
+    for (const item of data.reminders) await saveItem('reminders', item);
+  }
+  if (Array.isArray(data.people)) {
+    for (const item of data.people) await saveItem('people', item);
+  }
+  if (Array.isArray(data.dayLogs)) {
+    for (const log of data.dayLogs) {
+      if (log && log.date) {
+        await putDayLogRecord({
+          date: log.date,
+          secDateKey: log.secDateKey || getSecondaryCalendarKey(parseLocalDate(log.date)),
+          entries: normalizeDayLogEntries(log)
+        });
+      }
+    }
+  }
+  renderAll();
+}
+
+async function verifyDirPermission(handle, mode = 'readwrite') {
+  if (!handle || !handle.queryPermission) return true;
+  const opts = { mode };
+  if ((await handle.queryPermission(opts)) === 'granted') return true;
+  if (handle.requestPermission && (await handle.requestPermission(opts)) === 'granted') return true;
+  return false;
+}
+
+async function initBackupSystem() {
+  const savedHandle = await getMeta('backupDirHandle');
+  if (savedHandle) {
+    backupDirHandle = savedHandle;
+  }
+  await refreshBackupStatusUI();
+  await runDailyAutoBackupIfNeeded();
+}
+
+async function refreshBackupStatusUI() {
+  const folderStatus = document.getElementById('backup-folder-status');
+  const lastRunStatus = document.getElementById('backup-last-run-status');
+  if (!folderStatus || !lastRunStatus) return;
+
+  if (backupDirHandle && backupDirHandle.name) {
+    folderStatus.textContent = `Backup folder: ${backupDirHandle.name} (${BACKUP_FILENAME})`;
+  } else if (window.showDirectoryPicker) {
+    folderStatus.textContent = 'No backup folder selected.';
+  } else {
+    folderStatus.textContent = 'Folder picker not supported in this browser; using file download/picker fallback.';
   }
 
-  const file = fileInput.files[0];
-  const text = await file.text();
+  const lastAutoDate = await getMeta('lastAutoBackupDate');
+  lastRunStatus.textContent = `Last daily auto-backup: ${lastAutoDate || 'Never'}`;
+}
+
+async function selectBackupFolder() {
+  if (!window.showDirectoryPicker) {
+    alert('Directory selection is not supported in this browser. Use Push Backup or Update Data from Backup.');
+    return;
+  }
   try {
-    const data = JSON.parse(text);
-    if (target === 'all') {
-      if (data.tasks) for (const item of data.tasks) await saveItem('tasks', item);
-      if (data.events) for (const item of data.events) await saveItem('events', item);
-      if (data.reminders) for (const item of data.reminders) await saveItem('reminders', item);
-      if (data.people) for (const item of data.people) await saveItem('people', item);
-    } else if (data[target] || Array.isArray(data)) {
-      const list = data[target] || data;
-      for (const item of list) await saveItem(target, item);
-    }
-    alert('Data imported successfully!');
-    document.getElementById('settings-modal').classList.add('hidden');
-    renderAll();
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    backupDirHandle = handle;
+    await setMeta('backupDirHandle', handle);
+    await refreshBackupStatusUI();
+    await pushBackupToFolder(true);
   } catch (err) {
-    alert('Invalid JSON file format.');
+    if (err && err.name !== 'AbortError') {
+      alert('Could not select backup folder.');
+    }
+  }
+}
+
+async function pushBackupToFolder(isAuto = false) {
+  const payload = await buildFullBackupPayload();
+  const jsonText = JSON.stringify(payload, null, 2);
+
+  if (backupDirHandle && await verifyDirPermission(backupDirHandle, 'readwrite')) {
+    try {
+      const fileHandle = await backupDirHandle.getFileHandle(BACKUP_FILENAME, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(jsonText);
+      await writable.close();
+      if (!isAuto) alert(`Backup pushed to ${backupDirHandle.name}/${BACKUP_FILENAME}`);
+      return true;
+    } catch (err) {
+      if (!isAuto) alert('Failed to write backup to folder.');
+      return false;
+    }
+  }
+
+  if (!isAuto) {
+    const blob = new Blob([jsonText], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = BACKUP_FILENAME;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  return false;
+}
+
+async function runDailyAutoBackupIfNeeded() {
+  const todayStr = toIsoDateStr(getTodayLocal());
+  const lastAutoDate = await getMeta('lastAutoBackupDate');
+  if (lastAutoDate === todayStr) return;
+
+  if (backupDirHandle && await verifyDirPermission(backupDirHandle, 'readwrite')) {
+    const ok = await pushBackupToFolder(true);
+    if (ok) {
+      await setMeta('lastAutoBackupDate', todayStr);
+      await refreshBackupStatusUI();
+    }
+  }
+}
+
+async function updateDataFromBackup() {
+  if (backupDirHandle && await verifyDirPermission(backupDirHandle, 'read')) {
+    try {
+      const fileHandle = await backupDirHandle.getFileHandle(BACKUP_FILENAME, { create: false });
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      await applyBackupPayload(JSON.parse(text));
+      alert('Data updated from backup folder!');
+      return;
+    } catch (err) {
+      alert(`Could not read ${BACKUP_FILENAME} from selected folder.`);
+      return;
+    }
+  }
+
+  const fallbackInput = document.getElementById('fallback-backup-file-input');
+  if (fallbackInput) {
+    fallbackInput.value = '';
+    fallbackInput.click();
+  }
+}
+
+async function handleFallbackBackupFileSelected(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    await applyBackupPayload(JSON.parse(text));
+    alert('Data updated from backup file!');
+  } catch (err) {
+    alert('Invalid backup JSON file.');
   }
 }
 
@@ -1033,8 +1391,10 @@ function downloadSample(type) {
   a.href = url;
   a.download = `sample_${type}.json`;
   a.click();
+  URL.revokeObjectURL(url);
 }
 
+// --- SEARCH PICKERS ---
 function setupTaskPersonSearch() {
   const searchInput = document.getElementById('task-assigned-search');
   const resultsDiv = document.getElementById('task-assigned-results');
@@ -1051,7 +1411,7 @@ function setupTaskPersonSearch() {
     } else {
       resultsDiv.innerHTML = filtered.map(p => `
         <div class="search-result-item" onclick="selectTaskPerson('${p.id}', '${p.name.replace(/'/g, "\'")}')">
-          ${p.name} (${p.code})
+          ${escapeHtml(p.name)} (${escapeHtml(p.code)})
         </div>
       `).join('');
     }
@@ -1087,7 +1447,7 @@ function setupEventPersonSearch() {
     } else {
       resultsDiv.innerHTML = filtered.map(p => `
         <div class="search-result-item" onclick="addEventPersonTag('${p.name.replace(/'/g, "\'")}')">
-          ${p.name} (${p.code})
+          ${escapeHtml(p.name)} (${escapeHtml(p.code)})
         </div>
       `).join('');
     }
@@ -1119,17 +1479,37 @@ function renderEventPersonTags() {
   const container = document.getElementById('event-selected-tags');
   if (!container) return;
   container.innerHTML = selectedEventPersons.map(n => `
-    <span class="tag-chip">${n} <span class="remove-tag" onclick="removeEventPersonTag('${n.replace(/'/g, "\'")}')">&times;</span></span>
+    <span class="tag-chip">${escapeHtml(n)} <span class="remove-tag" onclick="removeEventPersonTag('${n.replace(/'/g, "\'")}')">&times;</span></span>
   `).join('');
 }
 
+// --- DAY LOGS & JOURNAL TIMELINE ---
 function normalizeDayLogEntries(dayLog) {
   if (!dayLog) return [];
-  if (Array.isArray(dayLog.entries)) return dayLog.entries;
+  if (Array.isArray(dayLog.entries)) {
+    return dayLog.entries.map((entry, i) => ({
+      id: entry.id || `entry-${i}`,
+      text: entry.text || '',
+      label: entry.label || 'General',
+      createdAt: entry.createdAt || entry.updatedAt || Date.now(),
+      updatedAt: entry.updatedAt || entry.createdAt || Date.now()
+    }));
+  }
   if (dayLog.notes) {
-    return [{ id: 'legacy-1', text: dayLog.notes, updatedAt: Date.now() }];
+    return [{
+      id: 'legacy-1',
+      text: dayLog.notes,
+      label: 'General',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }];
   }
   return [];
+}
+
+function formatEntryTime(ts) {
+  const d = new Date(ts || Date.now());
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 function renderDayLogEntriesList(dateStr, entries) {
@@ -1145,12 +1525,19 @@ function renderDayLogEntriesList(dateStr, entries) {
   entries.forEach((entry) => {
     const row = document.createElement('div');
     row.className = 'day-log-entry';
-    row.textContent = entry.text;
+    row.innerHTML = `
+      <div class="day-log-entry-header">
+        <span class="journal-label-badge">${escapeHtml(entry.label || 'General')}</span>
+        <span class="text-muted" style="font-size:11px;">${escapeHtml(formatEntryTime(entry.createdAt))}</span>
+      </div>
+      <div>${escapeHtml(entry.text)}</div>
+    `;
     addLongPressHandler(row, () => {
       openActionModal('dayLogs', {
         id: entry.id,
         date: dateStr,
-        text: entry.text
+        text: entry.text,
+        label: entry.label || 'General'
       });
     });
     listEl.appendChild(row);
@@ -1171,26 +1558,27 @@ async function showDayDetails(dayName, dateStr, tasks, events, reminders) {
   editingLogContext = null;
 
   let html = `<h4>Tasks</h4>`;
-  html += tasks.length ? tasks.map(t => `<p>• ${t.title} [${t.project}]</p>`).join('') : '<p class="text-muted">None</p>';
+  html += tasks.length ? tasks.map(t => `<p>• ${escapeHtml(t.title)} [${escapeHtml(t.project)}]</p>`).join('') : '<p class="text-muted">None</p>';
 
   html += `<h4 style="margin-top:10px;">Events</h4>`;
-  html += events.length ? events.map(ev => `<p>• ${ev.type}: ${ev.persons ? ev.persons.join(', ') : ''}</p>`).join('') : '<p class="text-muted">None</p>';
+  html += events.length ? events.map(ev => `<p>• ${escapeHtml(ev.type)}: ${escapeHtml(ev.persons ? ev.persons.join(', ') : '')}</p>`).join('') : '<p class="text-muted">None</p>';
 
   html += `<h4 style="margin-top:10px;">Reminders</h4>`;
-  html += reminders.length ? reminders.map(r => `<p>• ${r.title} (${r.aspect})</p>`).join('') : '<p class="text-muted">None</p>';
+  html += reminders.length ? reminders.map(r => `<p>• ${escapeHtml(r.title)} (${escapeHtml(r.aspect)})</p>`).join('') : '<p class="text-muted">None</p>';
 
   html += `
     <div class="day-log-box">
       <h4>Day Logs</h4>
       <div id="day-log-entries-list"></div>
       <div id="day-log-edit-form" class="hidden">
+        <input type="text" id="day-log-label-input" placeholder="Custom label (e.g. Work, Health, Reflection)..." style="margin-top:6px;">
         <textarea id="day-log-input" class="day-log-textarea" placeholder="Write a log entry..."></textarea>
         <div class="day-log-actions">
           <button type="button" id="save-day-log-btn" class="btn btn-primary btn-sm" onclick="saveDayLogEntry('${dateStr}')">Save Log</button>
           <button type="button" class="btn btn-secondary btn-sm" onclick="cancelDayLogEdit()">Cancel</button>
         </div>
       </div>
-      <button type="button" id="add-day-log-btn" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="openNewDayLogInput()">+ Add Log</button>
+      <button type="button" id="add-day-log-btn" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="openNewDayLogInput('', null, '${dateStr}', '')">+ Add Log</button>
     </div>
   `;
 
@@ -1199,13 +1587,15 @@ async function showDayDetails(dayName, dateStr, tasks, events, reminders) {
   modal.classList.remove('hidden');
 }
 
-function openNewDayLogInput(prefillText = '', logId = null, dateStr = null) {
+function openNewDayLogInput(prefillText = '', logId = null, dateStr = null, prefillLabel = '') {
   editingLogContext = logId && dateStr ? { id: logId, date: dateStr } : null;
   const form = document.getElementById('day-log-edit-form');
+  const labelInput = document.getElementById('day-log-label-input');
   const input = document.getElementById('day-log-input');
   const addBtn = document.getElementById('add-day-log-btn');
   if (!form || !input) return;
 
+  if (labelInput) labelInput.value = prefillLabel || '';
   input.value = prefillText;
   form.classList.remove('hidden');
   if (addBtn) addBtn.classList.add('hidden');
@@ -1215,8 +1605,10 @@ function openNewDayLogInput(prefillText = '', logId = null, dateStr = null) {
 function cancelDayLogEdit() {
   editingLogContext = null;
   const form = document.getElementById('day-log-edit-form');
+  const labelInput = document.getElementById('day-log-label-input');
   const input = document.getElementById('day-log-input');
   const addBtn = document.getElementById('add-day-log-btn');
+  if (labelInput) labelInput.value = '';
   if (input) input.value = '';
   if (form) form.classList.add('hidden');
   if (addBtn) addBtn.classList.remove('hidden');
@@ -1232,7 +1624,9 @@ function putDayLogRecord(record) {
 }
 
 async function saveDayLogEntry(dateStr) {
+  const labelInput = document.getElementById('day-log-label-input');
   const input = document.getElementById('day-log-input');
+  const label = (labelInput && labelInput.value.trim()) ? labelInput.value.trim() : 'General';
   const text = input ? input.value.trim() : '';
   if (!text) return;
 
@@ -1242,12 +1636,19 @@ async function saveDayLogEntry(dateStr) {
   if (editingLogContext && editingLogContext.date === dateStr) {
     const idx = entries.findIndex(entry => entry.id === editingLogContext.id);
     if (idx !== -1) {
-      entries[idx] = { ...entries[idx], text, updatedAt: Date.now() };
+      entries[idx] = {
+        ...entries[idx],
+        text,
+        label,
+        updatedAt: Date.now()
+      };
     }
   } else {
     entries.push({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       text,
+      label,
+      createdAt: Date.now(),
       updatedAt: Date.now()
     });
   }
@@ -1256,17 +1657,149 @@ async function saveDayLogEntry(dateStr) {
   await putDayLogRecord({ date: dateStr, secDateKey, entries });
 
   cancelDayLogEdit();
-  renderDayLogEntriesList(dateStr, entries);
+  if (document.getElementById('day-log-entries-list')) {
+    renderDayLogEntriesList(dateStr, entries);
+  }
+  renderJournal();
 }
 
 function getDayLog(dateStr) {
   return new Promise((resolve) => {
-    if (!db.objectStoreNames.contains('dayLogs')) {
+    if (!db || !db.objectStoreNames.contains('dayLogs')) {
       resolve(null);
       return;
     }
     const tx = db.transaction('dayLogs', 'readonly');
     const req = tx.objectStore('dayLogs').get(dateStr);
     req.onsuccess = () => resolve(req.result);
+  });
+}
+
+function toggleJournalLabelFilter(label) {
+  if (label === '__ALL__') {
+    journalSelectedLabels = [];
+    renderJournal();
+    return;
+  }
+  if (journalSelectedLabels.includes(label)) {
+    journalSelectedLabels = journalSelectedLabels.filter(l => l !== label);
+  } else {
+    journalSelectedLabels.push(label);
+  }
+  renderJournal();
+}
+
+async function renderJournal() {
+  const stripEl = document.getElementById('journal-week-strip');
+  const chipsEl = document.getElementById('journal-label-chips');
+  const timelineEl = document.getElementById('journal-timeline-container');
+  const headingEl = document.getElementById('journal-selected-day-heading');
+  const datePicker = document.getElementById('journal-date-picker');
+  if (!stripEl || !chipsEl || !timelineEl) return;
+
+  const allLogs = await getAll('dayLogs');
+  const logsByDate = new Map();
+  const allLabelsSet = new Set();
+
+  allLogs.forEach(rec => {
+    const entries = normalizeDayLogEntries(rec);
+    logsByDate.set(rec.date, entries);
+    entries.forEach(en => {
+      if (en.label) allLabelsSet.add(en.label);
+    });
+  });
+
+  const selectedDate = parseLocalDate(journalSelectedDateStr || toIsoDateStr(getTodayLocal()));
+  const selectedStr = toIsoDateStr(selectedDate);
+  if (datePicker && datePicker.value !== selectedStr) {
+    datePicker.value = selectedStr;
+  }
+
+  const weekStart = getStartOfWeek(selectedDate, 0);
+  const shortDays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  stripEl.innerHTML = '';
+
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    const dStr = toIsoDateStr(d);
+    const hasLogs = (logsByDate.get(dStr) || []).length > 0;
+    const isSelected = dStr === selectedStr;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `journal-day-pill ${isSelected ? 'selected' : ''} ${hasLogs ? 'has-logs' : ''}`;
+    btn.innerHTML = `
+      <span class="j-dow">${shortDays[d.getDay()]}</span>
+      <span class="j-num">${d.getDate()}</span>
+      <span class="j-dot"></span>
+    `;
+    btn.addEventListener('click', () => {
+      journalSelectedDateStr = dStr;
+      renderJournal();
+    });
+    stripEl.appendChild(btn);
+  }
+
+  const labels = [...allLabelsSet].sort((a, b) => a.localeCompare(b));
+  const isAllActive = journalSelectedLabels.length === 0;
+  chipsEl.innerHTML = `
+    <button type="button" class="chip ${isAllActive ? 'active' : ''}" onclick="toggleJournalLabelFilter('__ALL__')">All</button>
+    ${labels.map(lbl => {
+      const active = journalSelectedLabels.includes(lbl);
+      return `<button type="button" class="chip ${active ? 'active' : ''}" onclick="toggleJournalLabelFilter('${lbl.replace(/'/g, "\'")}')">${escapeHtml(lbl)}</button>`;
+    }).join('')}
+  `;
+
+  const todayStr = toIsoDateStr(getTodayLocal());
+  if (headingEl) {
+    headingEl.textContent = selectedStr === todayStr
+      ? 'Today'
+      : selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  let dayEntries = [...(logsByDate.get(selectedStr) || [])];
+  dayEntries.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+  if (journalSelectedLabels.length > 0) {
+    dayEntries = dayEntries.filter(en => journalSelectedLabels.includes(en.label || 'General'));
+  }
+
+  if (journalSearchQuery) {
+    dayEntries = dayEntries.filter(en =>
+      (en.text || '').toLowerCase().includes(journalSearchQuery) ||
+      (en.label || '').toLowerCase().includes(journalSearchQuery)
+    );
+  }
+
+  timelineEl.innerHTML = '';
+  if (!dayEntries.length) {
+    timelineEl.innerHTML = '<div class="text-muted" style="font-size:13px; padding:6px 0;">No log entries match this day or filter.</div>';
+    return;
+  }
+
+  dayEntries.forEach(en => {
+    const itemEl = document.createElement('div');
+    itemEl.className = 'journal-timeline-item';
+    itemEl.innerHTML = `
+      <div class="journal-timeline-node"></div>
+      <div class="journal-timeline-time">${escapeHtml(formatEntryTime(en.createdAt))}</div>
+      <div class="journal-entry-card">
+        <div class="journal-entry-top">
+          <span class="journal-label-badge">${escapeHtml(en.label || 'General')}</span>
+        </div>
+        <div class="journal-entry-text">${escapeHtml(en.text)}</div>
+      </div>
+    `;
+    const cardEl = itemEl.querySelector('.journal-entry-card');
+    addLongPressHandler(cardEl, () => {
+      openActionModal('dayLogs', {
+        id: en.id,
+        date: selectedStr,
+        text: en.text,
+        label: en.label || 'General'
+      });
+    });
+    timelineEl.appendChild(itemEl);
   });
 }

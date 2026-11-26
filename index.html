@@ -24,6 +24,7 @@
       <button class="tab-btn" data-tab="events">Events</button>
       <button class="tab-btn" data-tab="reminders">Reminders</button>
       <button class="tab-btn" data-tab="people">People</button>
+      <button class="tab-btn" data-tab="journal">Journal</button>
     </nav>
 
     <!-- Main Content -->
@@ -267,6 +268,9 @@
 
         <div class="card list-card">
           <h2>People Directory</h2>
+          <div class="form-group">
+            <input type="text" id="people-search-input" placeholder="Search people by name, code, phone, email..." autocomplete="off">
+          </div>
           <div id="people-list" class="item-list"></div>
         </div>
 
@@ -277,13 +281,42 @@
           </div>
         </div>
       </section>
+
+      <!-- JOURNAL TAB -->
+      <section id="tab-journal" class="tab-content">
+        <div class="card journal-header-card">
+          <div class="journal-top-bar">
+            <h2>Timeline</h2>
+            <div class="journal-toolbar-actions">
+              <input type="date" id="journal-date-picker" class="journal-date-input" aria-label="Select journal date">
+              <button type="button" id="journal-search-toggle-btn" class="btn-sm" title="Search logs">🔍</button>
+            </div>
+          </div>
+
+          <div id="journal-search-box" class="journal-search-wrap hidden">
+            <input type="text" id="journal-search-input" placeholder="Search log text or label..." autocomplete="off">
+          </div>
+
+          <div id="journal-week-strip" class="journal-week-strip"></div>
+        </div>
+
+        <div class="card journal-filter-card">
+          <div class="journal-filter-label">Filter by Label(s):</div>
+          <div id="journal-label-chips" class="journal-label-chips"></div>
+        </div>
+
+        <div class="card">
+          <h3 id="journal-selected-day-heading" class="journal-section-heading">Today</h3>
+          <div id="journal-timeline-container" class="journal-timeline"></div>
+        </div>
+      </section>
     </main>
 
     <!-- SETTINGS MODAL -->
     <div id="settings-modal" class="modal hidden">
       <div class="modal-content">
         <span class="close-modal" id="close-settings-modal">&times;</span>
-        <h2>Settings & Data Management</h2>
+        <h2>Settings & Backup</h2>
 
         <div class="settings-section">
           <h3>Manage Custom Lists & Projects</h3>
@@ -305,45 +338,25 @@
         <hr>
 
         <div class="settings-section">
-          <h3>Export Data</h3>
-          <div class="form-group">
-            <label for="export-tab-select">Select Tab Data:</label>
-            <select id="export-tab-select">
-              <option value="all">All Data (Full Backup)</option>
-              <option value="tasks">Tasks Only</option>
-              <option value="events">Events Only</option>
-              <option value="reminders">Reminders Only</option>
-              <option value="people">People Only</option>
-            </select>
+          <h3>Folder Auto & Manual Backup</h3>
+          <div id="backup-folder-status" class="backup-status-text">No backup folder selected.</div>
+          <div id="backup-last-run-status" class="backup-status-text">Last daily auto-backup: Never</div>
+          <div class="backup-btn-stack">
+            <button type="button" id="select-backup-folder-btn" class="btn btn-secondary">Select Backup Folder</button>
+            <button type="button" id="push-backup-btn" class="btn btn-primary">Push Backup</button>
+            <button type="button" id="update-from-backup-btn" class="btn btn-secondary">Update Data from Backup</button>
           </div>
-          <button id="export-data-btn" class="btn btn-secondary">Export JSON</button>
-        </div>
-        <hr>
-
-        <div class="settings-section">
-          <h3>Import Data</h3>
-          <div class="form-group">
-            <label for="import-tab-select">Target Tab:</label>
-            <select id="import-tab-select">
-              <option value="all">Full Backup Restore</option>
-              <option value="tasks">Tasks</option>
-              <option value="events">Events</option>
-              <option value="reminders">Reminders</option>
-              <option value="people">People</option>
-            </select>
-          </div>
-          <input type="file" id="import-file-input" accept=".json,.csv">
-          <button id="import-data-btn" class="btn btn-secondary">Import File</button>
+          <input type="file" id="fallback-backup-file-input" accept=".json" class="hidden">
         </div>
         <hr>
 
         <div class="settings-section">
           <h3>Download Sample Templates</h3>
           <div class="sample-btn-grid">
-            <button class="btn-sm sample-btn" data-type="tasks">Tasks Sample</button>
-            <button class="btn-sm sample-btn" data-type="events">Events Sample</button>
-            <button class="btn-sm sample-btn" data-type="reminders">Reminders Sample</button>
-            <button class="btn-sm sample-btn" data-type="people">People Sample</button>
+            <button type="button" class="btn-sm sample-btn" data-type="tasks">Tasks Sample</button>
+            <button type="button" class="btn-sm sample-btn" data-type="events">Events Sample</button>
+            <button type="button" class="btn-sm sample-btn" data-type="reminders">Reminders Sample</button>
+            <button type="button" class="btn-sm sample-btn" data-type="people">People Sample</button>
           </div>
         </div>
       </div>
@@ -354,10 +367,19 @@
       <div class="modal-content modal-sm">
         <h3 id="action-modal-title">Item Options</h3>
         <div class="action-modal-buttons">
-          <button id="action-edit-btn" class="btn btn-primary">Edit</button>
-          <button id="action-delete-btn" class="btn btn-danger">Delete</button>
-          <button id="action-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button type="button" id="action-edit-btn" class="btn btn-primary">Edit</button>
+          <button type="button" id="action-delete-btn" class="btn btn-danger">Delete</button>
+          <button type="button" id="action-cancel-btn" class="btn btn-secondary">Cancel</button>
         </div>
+      </div>
+    </div>
+
+    <!-- FULL PHOTO VIEWER MODAL -->
+    <div id="photo-viewer-modal" class="modal hidden">
+      <div class="modal-content">
+        <span class="close-modal" id="close-photo-viewer-modal">&times;</span>
+        <h3 id="photo-viewer-title">Photo</h3>
+        <img id="photo-viewer-img" class="full-photo-img" src="" alt="Full resolution photo">
       </div>
     </div>
 
