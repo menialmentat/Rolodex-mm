@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rolodex-cache-v6';
+const CACHE_NAME = 'rolodex-cache-v7';
 const ASSETS = [
   './',
   './index.html',

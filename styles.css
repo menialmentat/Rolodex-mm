@@ -950,3 +950,141 @@ hr {
   border-radius: 999px;
   white-space: nowrap;
 }
+
+.aspect-group {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background-color: #ffffff;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.aspect-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background-color: #f1f5f9;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.aspect-group-body {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aspect-group-body.hidden {
+  display: none;
+}
+
+.person-code-subline {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.habit-cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.habit-cal-month-label {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.habit-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.habit-cal-dow {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.habit-cal-day {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  background-color: transparent;
+  border: 1px solid transparent;
+}
+
+.habit-cal-day.muted-day {
+  color: #cbd5e1;
+}
+
+.habit-cal-day.scheduled {
+  background-color: #cbd5e1;
+  color: #0f172a;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.habit-cal-day.scheduled.completed {
+  background-color: #86efac;
+  color: #064e3b;
+  font-weight: 700;
+}
+
+.habit-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.habit-stat-box {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+  background-color: #f8fafc;
+}
+
+.habit-stat-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+.habit-stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.day-task-clickable {
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  background-color: #ffffff;
+  font-size: 13px;
+}
+
+.day-task-clickable.completed {
+  text-decoration: line-through;
+  opacity: 0.65;
+  background-color: #f1f5f9;
+}

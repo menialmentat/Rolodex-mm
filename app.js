@@ -1,4 +1,4 @@
-// Rolodex PWA - Version 6 Codebase
+// Rolodex PWA - Version 7 Codebase
 const DB_NAME = 'RolodexDB';
 const DB_VERSION = 2;
 const BACKUP_FILENAME = 'rolodex_backup.json';
@@ -46,28 +46,46 @@ function getTodayLocal() {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
-// Secondary Calendar Helper (Anchored to October 16, 1991) -> WW-QQ-MM-YY
-function getSecondaryCalendarKey(dateObj) {
+// Secondary Calendar Helper (Week starts Sunday; Quarter starts on Sunday of week containing Oct 16) -> WW-QQ-MM-YY
+function getSundayOfWeek(dateObj) {
   const d = parseLocalDate(dateObj);
-  const anchorMonth = 9; // October (0-indexed)
-  const anchorDay = 16;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay());
+}
+
+function getSecondaryCycleStartSunday(dateObj) {
+  const d = parseLocalDate(dateObj);
   const year = d.getFullYear();
+  const oct16ThisYear = new Date(year, 9, 16);
+  const cycleStartThisYear = getSundayOfWeek(oct16ThisYear);
 
-  let anchorThisYear = new Date(year, anchorMonth, anchorDay);
-  let personalYearNum = year - 1991;
-
-  if (d < anchorThisYear) {
-    personalYearNum -= 1;
-    anchorThisYear = new Date(year - 1, anchorMonth, anchorDay);
+  if (d < cycleStartThisYear) {
+    const oct16PrevYear = new Date(year - 1, 9, 16);
+    return {
+      startSunday: getSundayOfWeek(oct16PrevYear),
+      personalYearNum: (year - 1) - 1991
+    };
   }
 
-  const diffTime = d - anchorThisYear;
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  let weekNum = Math.floor(diffDays / 7) + 1;
+  return {
+    startSunday: cycleStartThisYear,
+    personalYearNum: year - 1991
+  };
+}
 
-  let monthNum = Math.ceil(weekNum / 4);
-  let quarterNum = Math.ceil(weekNum / 13);
+function getSecondaryCalendarKey(dateObj) {
+  const d = parseLocalDate(dateObj);
+  const { startSunday, personalYearNum } = getSecondaryCycleStartSunday(d);
+  const currentSunday = getSundayOfWeek(d);
 
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const diffWeeks = Math.floor((currentSunday - startSunday) / (msPerDay * 7));
+  let weekNum = diffWeeks + 1;
+  let quarterNum = Math.floor(diffWeeks / 13) + 1;
+  let monthNum = Math.floor(diffWeeks / 4) + 1;
+
+  if (quarterNum > 4) {
+    quarterNum = 4;
+  }
   if (weekNum > 52) {
     weekNum = 0;
     monthNum = 0;
@@ -192,7 +210,9 @@ function setupEventListeners() {
   });
 
   document.getElementById('select-backup-folder-btn').addEventListener('click', selectBackupFolder);
-  document.getElementById('push-backup-btn').addEventListener('click', () => pushBackupToFolder(false));
+  document.getElementById('push-backup-btn').addEventListener('click', () => {
+    if (confirm('Push current app data to backup?')) pushBackupToFolder(false);
+  });
   document.getElementById('update-from-backup-btn').addEventListener('click', updateDataFromBackup);
   document.getElementById('fallback-backup-file-input').addEventListener('change', handleFallbackBackupFileSelected);
 
@@ -213,6 +233,20 @@ function setupEventListeners() {
   document.getElementById('reset-week-btn').addEventListener('click', () => { currentWeekOffset = 0; renderHome(); });
   document.getElementById('close-day-modal').addEventListener('click', () => {
     document.getElementById('day-details-modal').classList.add('hidden');
+  });
+  document.getElementById('close-reminder-calendar-modal')?.addEventListener('click', () => {
+    document.getElementById('reminder-calendar-modal').classList.add('hidden');
+    activeHabitReminderId = null;
+  });
+  document.getElementById('habit-prev-month-btn')?.addEventListener('click', async () => {
+    if (!activeHabitMonthDate) activeHabitMonthDate = getTodayLocal();
+    activeHabitMonthDate = new Date(activeHabitMonthDate.getFullYear(), activeHabitMonthDate.getMonth() - 1, 1);
+    await renderReminderHabitCalendarModal();
+  });
+  document.getElementById('habit-next-month-btn')?.addEventListener('click', async () => {
+    if (!activeHabitMonthDate) activeHabitMonthDate = getTodayLocal();
+    activeHabitMonthDate = new Date(activeHabitMonthDate.getFullYear(), activeHabitMonthDate.getMonth() + 1, 1);
+    await renderReminderHabitCalendarModal();
   });
 
   document.getElementById('task-deadline-type').addEventListener('change', updateTaskDeadlineInput);
@@ -354,22 +388,22 @@ async function renderHome() {
     const regKey = getRegularCalendarKey(dayDate);
     const secKey = getSecondaryCalendarKey(dayDate);
 
-    const weekPeriodOccs = [];
-    reminders.forEach(r => {
-      if (r.routine) {
-        if (isReminderOnDate(r, dayDate)) {
-          getReminderOccurrencesOnDate(r, dayDate).forEach(occ => weekPeriodOccs.push({ r, occ }));
+    let summaryText = `Tasks: ${dayTasks.length} | Events: ${dayEvents.length}`;
+    if (showReminderSummary) {
+      const weekPeriodOccs = [];
+      reminders.forEach(r => {
+        if (r.routine) {
+          if (isReminderOnDate(r, dayDate)) {
+            getReminderOccurrencesOnDate(r, dayDate).forEach(occ => weekPeriodOccs.push({ r, occ }));
+          }
+        } else {
+          getReminderOccurrencesInWeek(r, startOfWeek).forEach(occ => weekPeriodOccs.push({ r, occ }));
         }
-      } else {
-        getReminderOccurrencesInWeek(r, startOfWeek).forEach(occ => weekPeriodOccs.push({ r, occ }));
-      }
-    });
-
-    const summaryText = showReminderSummary
-      ? (weekPeriodOccs.length
-          ? `Reminders (${weekPeriodOccs.length}): ${weekPeriodOccs.map(({ r, occ }) => `${r.title} [${occ.date}${occ.completed ? ' ✓' : ''}]`).join(', ')}`
-          : 'Reminders: None')
-      : `Tasks: ${dayTasks.length} | Events: ${dayEvents.length}`;
+      });
+      summaryText = weekPeriodOccs.length
+        ? `Reminders (${weekPeriodOccs.length}): ${weekPeriodOccs.map(({ r, occ }) => `${r.title} [${occ.date}${occ.completed ? ' ✓' : ''}]`).join(', ')}`
+        : 'Reminders: None';
+    }
 
     const row = document.createElement('div');
     row.className = `day-row-container ${isToday ? 'today-highlight' : ''}`;
@@ -381,7 +415,7 @@ async function renderHome() {
       </div>
       <div class="day-summary-bottom">${summaryText}</div>
     `;
-    row.addEventListener('click', () => showDayDetails(dayNames[i], dateStr, dayTasks, dayEvents, dayReminders));
+    row.addEventListener('click', () => showDayDetails(dayNames[i], dateStr, tasks, dayEvents, showReminderSummary ? dayReminders : [], dayDate));
     weekDaysContainer.appendChild(row);
   }
 }
@@ -748,14 +782,20 @@ function isEventInQuarterWithLead(ev, today) {
   return (currentQ === eventQ) || (eDate >= leadStart && eDate <= tDate);
 }
 
-// --- REMINDERS TAB: Routine Flag, 1-Year / 120-Occurrence Generation & Completion ---
+// --- REMINDERS TAB: End Date, Aspect Collapsible Groups, Habit Calendar Modal & Completion ---
+const DEFAULT_REMINDER_END_DATE = '2051-10-15';
+let expandedReminderAspect = null;
+let activeHabitReminderId = null;
+let activeHabitMonthDate = null;
+
 function generateReminderOccurrences(reminder) {
   const occurrences = [];
   const start = parseLocalDate(reminder.startDate);
   if (!start || Number.isNaN(start.getTime())) return occurrences;
 
-  const endLimit = new Date(start.getFullYear() + 1, start.getMonth(), start.getDate());
-  const maxCount = 120;
+  const end = parseLocalDate(reminder.endDate || DEFAULT_REMINDER_END_DATE);
+  if (!end || Number.isNaN(end.getTime()) || end < start) return occurrences;
+
   const interval = Math.max(1, parseInt(reminder.weeksInterval, 10) || 1);
   const selectedDays = Array.isArray(reminder.days) ? reminder.days : [];
   const existingMap = new Map();
@@ -766,7 +806,7 @@ function generateReminderOccurrences(reminder) {
   }
 
   const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  while (cursor <= endLimit && occurrences.length < maxCount) {
+  while (cursor <= end) {
     const diffDays = Math.floor((cursor - start) / (1000 * 60 * 60 * 24));
     const weeksDiff = Math.floor(diffDays / 7);
     const weekMatches = (weeksDiff % interval) === 0;
@@ -878,6 +918,9 @@ async function toggleReminderOccurrenceCompletion(reminderId, occDate) {
   await saveItem('reminders', rem);
   renderReminders();
   renderHome();
+  if (activeHabitReminderId == reminderId && !document.getElementById('reminder-calendar-modal').classList.contains('hidden')) {
+    await renderReminderHabitCalendarModal();
+  }
 }
 
 function getReminderCompletionScoreThroughYesterday(reminder) {
@@ -900,6 +943,7 @@ async function duplicateReminderItem(reminder) {
   const copy = {
     title: `${reminder.title} (Copy)`,
     startDate: reminder.startDate,
+    endDate: reminder.endDate || DEFAULT_REMINDER_END_DATE,
     routine: Boolean(reminder.routine),
     aspect: reminder.aspect || 'Daily',
     weeksInterval: reminder.weeksInterval || 1,
@@ -910,6 +954,84 @@ async function duplicateReminderItem(reminder) {
   await saveItem('reminders', copy);
   renderReminders();
   renderHome();
+}
+
+async function openReminderHabitCalendar(reminderId) {
+  const reminders = await getAll('reminders');
+  const rem = reminders.find(r => r.id == reminderId);
+  if (!rem) return;
+  activeHabitReminderId = rem.id;
+  activeHabitMonthDate = parseLocalDate(rem.startDate) || getTodayLocal();
+  document.getElementById('reminder-calendar-modal').classList.remove('hidden');
+  await renderReminderHabitCalendarModal();
+}
+
+async function renderReminderHabitCalendarModal() {
+  if (!activeHabitReminderId) return;
+  const reminders = await getAll('reminders');
+  const rem = reminders.find(r => r.id == activeHabitReminderId);
+  if (!rem) return;
+
+  document.getElementById('reminder-cal-title').textContent = rem.title;
+  const baseDate = activeHabitMonthDate || getTodayLocal();
+  const year = baseDate.getFullYear();
+  const month = baseDate.getMonth();
+
+  document.getElementById('habit-month-label').textContent =
+    new Date(year, month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const occs = getReminderOccurrenceDates(rem);
+  const occMap = new Map();
+  occs.forEach(o => occMap.set(o.date, Boolean(o.completed)));
+
+  const grid = document.getElementById('habit-calendar-grid');
+  grid.innerHTML = '';
+
+  const dows = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  dows.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'habit-cal-dow';
+    el.textContent = d;
+    grid.appendChild(el);
+  });
+
+  const firstOfMonth = new Date(year, month, 1);
+  const mondayOffset = (firstOfMonth.getDay() + 6) % 7;
+  const gridStart = new Date(year, month, 1 - mondayOffset);
+
+  let monthDoneCount = 0;
+  for (let i = 0; i < 42; i++) {
+    const cellDate = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    const dateStr = toIsoDateStr(cellDate);
+    const inCurrentMonth = cellDate.getMonth() === month;
+    const isScheduled = occMap.has(dateStr);
+    const isDone = isScheduled && occMap.get(dateStr);
+
+    if (inCurrentMonth && isDone) monthDoneCount++;
+
+    const cell = document.createElement('div');
+    cell.className = 'habit-cal-day';
+    if (!inCurrentMonth) cell.classList.add('muted-day');
+    if (isScheduled) {
+      cell.classList.add('scheduled');
+      if (isDone) cell.classList.add('completed');
+      cell.title = 'Click to toggle completion';
+      cell.addEventListener('click', async () => {
+        await toggleReminderOccurrenceCompletion(rem.id, dateStr);
+      });
+    }
+    cell.textContent = cellDate.getDate();
+    grid.appendChild(cell);
+  }
+
+  const totalDoneCount = occs.filter(o => Boolean(o.completed)).length;
+  document.getElementById('habit-month-done').textContent = String(monthDoneCount);
+  document.getElementById('habit-total-done').textContent = String(totalDoneCount);
+}
+
+function toggleReminderAspectAccordion(aspectName) {
+  expandedReminderAspect = expandedReminderAspect === aspectName ? null : aspectName;
+  renderReminders();
 }
 
 async function renderReminders() {
@@ -925,25 +1047,57 @@ async function renderReminders() {
   const aspectSelect = document.getElementById('reminder-aspect');
   aspectSelect.innerHTML = customAspects.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
 
-  const filteredReminders = reminders.filter(r => r.aspect === currentAspect);
   const remindersList = document.getElementById('reminders-list');
   remindersList.innerHTML = '';
 
-  filteredReminders.forEach(r => {
-    const scorePct = getReminderCompletionScoreThroughYesterday(r);
-    const row = document.createElement('div');
-    row.className = 'list-item reminder-list-row';
-    row.innerHTML = `
-      <div class="item-title">${escapeHtml(r.title)}</div>
-      <span class="reminder-completion-score">${scorePct}%</span>
+  const aspectsToRender = currentAspect === 'All'
+    ? customAspects
+    : [...new Set([currentAspect, ...customAspects])];
+
+  aspectsToRender.forEach(aspectName => {
+    const groupReminders = reminders.filter(r => (r.aspect || 'Daily') === aspectName);
+    const isExpanded = expandedReminderAspect === aspectName;
+
+    const groupBox = document.createElement('div');
+    groupBox.className = 'aspect-group';
+
+    const groupHeader = document.createElement('div');
+    groupHeader.className = 'aspect-group-header';
+    groupHeader.innerHTML = `
+      <span>${escapeHtml(aspectName)} (${groupReminders.length})</span>
+      <span>${isExpanded ? '▾' : '▸'}</span>
     `;
-    addLongPressHandler(row, () => openActionModal('reminders', r));
-    remindersList.appendChild(row);
+    groupHeader.addEventListener('click', () => toggleReminderAspectAccordion(aspectName));
+    groupBox.appendChild(groupHeader);
+
+    const groupBody = document.createElement('div');
+    groupBody.className = `aspect-group-body ${isExpanded ? '' : 'hidden'}`;
+
+    if (!groupReminders.length) {
+      groupBody.innerHTML = `<div class="text-muted" style="font-size:13px;">No reminders in ${escapeHtml(aspectName)}.</div>`;
+    } else {
+      groupReminders.forEach(r => {
+        const scorePct = getReminderCompletionScoreThroughYesterday(r);
+        const row = document.createElement('div');
+        row.className = 'list-item reminder-list-row';
+        row.innerHTML = `
+          <div class="item-title">${escapeHtml(r.title)}</div>
+          <span class="reminder-completion-score">${scorePct}%</span>
+        `;
+        row.addEventListener('click', () => openReminderHabitCalendar(r.id));
+        addLongPressHandler(row, () => openActionModal('reminders', r));
+        groupBody.appendChild(row);
+      });
+    }
+
+    groupBox.appendChild(groupBody);
+    remindersList.appendChild(groupBox);
   });
 }
 
 function selectAspect(a) {
   currentAspect = a;
+  expandedReminderAspect = a;
   renderReminders();
 }
 
@@ -952,6 +1106,7 @@ function addAspectPrompt() {
   if (name) {
     if (!customAspects.includes(name)) customAspects.push(name);
     currentAspect = name;
+    expandedReminderAspect = name;
     renderReminders();
   }
 }
@@ -972,6 +1127,7 @@ async function handleReminderSubmit(e) {
   const reminder = {
     title: document.getElementById('reminder-title').value,
     startDate: document.getElementById('reminder-start-date').value,
+    endDate: document.getElementById('reminder-end-date')?.value || DEFAULT_REMINDER_END_DATE,
     routine: isRoutine,
     aspect: document.getElementById('reminder-aspect').value || 'Daily',
     weeksInterval: parseInt(document.getElementById('reminder-weeks-interval').value, 10) || 1,
@@ -982,7 +1138,11 @@ async function handleReminderSubmit(e) {
 
   if (id) reminder.id = parseInt(id, 10);
   await saveItem('reminders', reminder);
+  expandedReminderAspect = reminder.aspect;
   document.getElementById('reminder-form').reset();
+  if (document.getElementById('reminder-end-date')) {
+    document.getElementById('reminder-end-date').value = DEFAULT_REMINDER_END_DATE;
+  }
   document.querySelectorAll('.day-chip').forEach(c => c.classList.remove('selected'));
   document.getElementById('reminder-id').value = '';
   renderReminders();
@@ -1062,10 +1222,16 @@ async function renderPeople() {
       header.appendChild(avatar);
     }
 
+    const infoCol = document.createElement('div');
     const titleDiv = document.createElement('div');
     titleDiv.className = 'item-title';
-    titleDiv.textContent = `${p.name} (${p.code})`;
-    header.appendChild(titleDiv);
+    titleDiv.textContent = p.name;
+    const codeDiv = document.createElement('div');
+    codeDiv.className = 'person-code-subline';
+    codeDiv.textContent = p.code || '';
+    infoCol.appendChild(titleDiv);
+    infoCol.appendChild(codeDiv);
+    header.appendChild(infoCol);
 
     item.appendChild(header);
     item.addEventListener('click', () => showPersonDetails(p, people, tasks, events));
@@ -1365,6 +1531,9 @@ function editItem(storeName, item) {
     document.getElementById('reminder-id').value = item.id;
     document.getElementById('reminder-title').value = item.title;
     document.getElementById('reminder-start-date').value = item.startDate || '';
+    if (document.getElementById('reminder-end-date')) {
+      document.getElementById('reminder-end-date').value = item.endDate || DEFAULT_REMINDER_END_DATE;
+    }
     const routineCb = document.getElementById('reminder-routine');
     if (routineCb) routineCb.checked = Boolean(item.routine);
     document.getElementById('reminder-aspect').value = item.aspect;
@@ -1575,6 +1744,7 @@ async function runDailyAutoBackupIfNeeded() {
 }
 
 async function updateDataFromBackup() {
+  if (!confirm('Update app data from backup? This may overwrite existing records.')) return;
   if (backupDirHandle && await verifyDirPermission(backupDirHandle, 'read')) {
     try {
       const fileHandle = await backupDirHandle.getFileHandle(BACKUP_FILENAME, { create: false });
@@ -1779,11 +1949,42 @@ function renderDayLogEntriesList(dateStr, entries) {
   });
 }
 
-async function showDayDetails(dayName, dateStr, tasks, events, reminders) {
+async function toggleTaskFinishedFromDayModal(taskId, dayName, dateStr, dayEvents, dayReminders, targetDateObj) {
+  const allTasks = await getAll('tasks');
+  const t = allTasks.find(item => item.id == taskId);
+  if (!t) return;
+  t.completed = !t.completed;
+  await saveItem('tasks', t);
+  renderTasks();
+  renderHome();
+  await showDayDetails(dayName, dateStr, allTasks, dayEvents, dayReminders, targetDateObj);
+}
+
+function renderClickableTasksHtml(taskList, dayName, dateStr, dayEvents, dayReminders, targetDateObj) {
+  if (!taskList.length) return '<p class="text-muted">None</p>';
+  return taskList.map(t => `
+    <div class="day-task-clickable ${t.completed ? 'completed' : ''}" onclick="toggleTaskFinishedFromDayModal(${t.id}, '${dayName.replace(/'/g, "\'")}', '${dateStr}', window._lastDayModalEvents || [], window._lastDayModalReminders || [], window._lastDayModalDateObj || null)">
+      ${t.completed ? '✓ ' : '• '}<strong>${escapeHtml(t.title)}</strong> [${escapeHtml(t.project)}]
+    </div>
+  `).join('');
+}
+
+async function showDayDetails(dayName, dateStr, allOrDayTasks, events, reminders, targetDateObj = null) {
   const modal = document.getElementById('day-details-modal');
-  const dateObj = parseLocalDate(dateStr);
+  const dateObj = targetDateObj ? parseLocalDate(targetDateObj) : parseLocalDate(dateStr);
   const secKey = getSecondaryCalendarKey(dateObj);
   const regKey = getRegularCalendarKey(dateObj);
+
+  window._lastDayModalEvents = events;
+  window._lastDayModalReminders = reminders;
+  window._lastDayModalDateObj = dateObj;
+
+  const allTasks = Array.isArray(allOrDayTasks) ? allOrDayTasks : await getAll('tasks');
+  const dayOnlyTasks = allTasks.filter(t => t.deadline === dateStr);
+  const weekStart = getStartOfWeek(dateObj, 0);
+  const weekTasks = allTasks.filter(t => isTaskInWeek(t, weekStart));
+  const monthTasks = allTasks.filter(t => isTaskInMonth(t, dateObj));
+  const quarterTasks = allTasks.filter(t => isTaskInQuarter(t, dateObj));
 
   document.getElementById('day-modal-title').textContent = `${regKey} | ${dayName} | ${secKey}`;
   const body = document.getElementById('day-modal-body');
@@ -1792,14 +1993,25 @@ async function showDayDetails(dayName, dateStr, tasks, events, reminders) {
   const entries = normalizeDayLogEntries(dayLog);
   editingLogContext = null;
 
-  let html = `<h4>Tasks</h4>`;
-  html += tasks.length ? tasks.map(t => `<p>• ${escapeHtml(t.title)} [${escapeHtml(t.project)}]</p>`).join('') : '<p class="text-muted">None</p>';
+  let html = `<h4>Day Tasks</h4>`;
+  html += renderClickableTasksHtml(dayOnlyTasks, dayName, dateStr, events, reminders, dateObj);
+
+  html += `<h4 style="margin-top:10px;">Week Tasks</h4>`;
+  html += renderClickableTasksHtml(weekTasks, dayName, dateStr, events, reminders, dateObj);
+
+  html += `<h4 style="margin-top:10px;">Month Tasks</h4>`;
+  html += renderClickableTasksHtml(monthTasks, dayName, dateStr, events, reminders, dateObj);
+
+  html += `<h4 style="margin-top:10px;">Quarter Tasks</h4>`;
+  html += renderClickableTasksHtml(quarterTasks, dayName, dateStr, events, reminders, dateObj);
 
   html += `<h4 style="margin-top:10px;">Events</h4>`;
   html += events.length ? events.map(ev => `<p>• ${escapeHtml(ev.type)}: ${escapeHtml(ev.persons ? ev.persons.join(', ') : '')}</p>`).join('') : '<p class="text-muted">None</p>';
 
-  html += `<h4 style="margin-top:10px;">Reminders</h4>`;
-  html += reminders.length ? reminders.map(r => `<p>• ${escapeHtml(r.title)} (${escapeHtml(r.aspect)})</p>`).join('') : '<p class="text-muted">None</p>';
+  if (showReminderSummary) {
+    html += `<h4 style="margin-top:10px;">Reminders</h4>`;
+    html += reminders.length ? reminders.map(r => `<p>• ${escapeHtml(r.title)} (${escapeHtml(r.aspect)})</p>`).join('') : '<p class="text-muted">None</p>';
+  }
 
   html += `
     <div class="day-log-box">

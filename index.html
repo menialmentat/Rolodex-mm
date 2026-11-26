@@ -192,6 +192,10 @@
               <input type="date" id="reminder-start-date" required>
             </div>
             <div class="form-group">
+              <label for="reminder-end-date">End Date:</label>
+              <input type="date" id="reminder-end-date" value="2051-10-15" required>
+            </div>
+            <div class="form-group">
               <label for="reminder-routine" class="checkbox-inline">
                 <input type="checkbox" id="reminder-routine">
                 <span>Routine</span>
@@ -227,6 +231,29 @@
           <button id="add-aspect-btn" class="btn-sm">+ Aspect</button>
         </div>
 
+        <!-- Reminder Habit Calendar Modal -->
+        <div id="reminder-calendar-modal" class="modal hidden">
+          <div class="modal-content">
+            <span class="close-modal" id="close-reminder-calendar-modal">&times;</span>
+            <h2 id="reminder-cal-title">Reminder Calendar</h2>
+            <div class="habit-cal-nav">
+              <button type="button" id="habit-prev-month-btn" class="btn-sm">&lt; Prev</button>
+              <span id="habit-month-label" class="habit-cal-month-label"></span>
+              <button type="button" id="habit-next-month-btn" class="btn-sm">Next &gt;</button>
+            </div>
+            <div id="habit-calendar-grid" class="habit-cal-grid"></div>
+            <div class="habit-stats-row">
+              <div class="habit-stat-box">
+                <div id="habit-month-done" class="habit-stat-num">0</div>
+                <div class="habit-stat-label">Done in Month</div>
+              </div>
+              <div class="habit-stat-box">
+                <div id="habit-total-done" class="habit-stat-num">0</div>
+                <div class="habit-stat-label">Total Days Done</div>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="card list-card">
           <h2>Reminders List</h2>
           <div id="reminders-list" class="item-list"></div>
