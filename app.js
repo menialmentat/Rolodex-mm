@@ -1,18 +1,68 @@
-// Main JavaScript Application File for Rolodex PWA
-// Features: IndexedDB, Service Worker, Swipe Tabs, Tab-based Data Import/Export
-
+// Rolodex PWA - Version 2 Complete Codebase
 const DB_NAME = 'RolodexDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let db = null;
 
-// Application State
 let activeTab = 'home';
-let currentWeekOffset = 0; // 0 = current week
+let currentWeekOffset = 0;
 let currentProject = 'All';
 let currentAspect = 'Daily';
 let selectedLongPressItem = null;
+let selectedEventPersons = [];
+let customProjects = ['Default Tasks'];
+let customAspects = ['Daily'];
 
-// Initialize Database
+// Secondary Calendar Helper (Anchored to October 16, 1991)
+function getSecondaryCalendarKey(dateObj) {
+  const anchorMonth = 9; // October (0-indexed)
+  const anchorDay = 16;
+  const year = dateObj.getFullYear();
+  
+  // Determine anchor date for this personal year
+  let anchorThisYear = new Date(year, anchorMonth, anchorDay);
+  let personalYearNum = year - 1991;
+  
+  if (dateObj < anchorThisYear) {
+    personalYearNum -= 1;
+    anchorThisYear = new Date(year - 1, anchorMonth, anchorDay);
+  }
+  
+  const diffTime = dateObj - anchorThisYear;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  let weekNum = Math.floor(diffDays / 7) + 1;
+  
+  let monthNum = Math.ceil(weekNum / 4);
+  let quarterNum = Math.ceil(weekNum / 13);
+  
+  if (weekNum > 52) {
+    weekNum = 0;
+    monthNum = 0;
+    quarterNum = 4;
+  }
+  
+  const yy = String(personalYearNum % 100).padStart(2, '0');
+  const qq = `Q${quarterNum}`;
+  const mm = String(monthNum).padStart(2, '0');
+  const ww = String(weekNum).padStart(2, '0');
+  
+  return `${yy}-${qq}-${mm}-${ww}`;
+}
+
+function getRegularCalendarKey(dateObj) {
+  const d = new Date(Date.UTC(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  
+  const ww = String(weekNo).padStart(2, '0');
+  const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const qq = `Q${Math.floor(dateObj.getMonth() / 3) + 1}`;
+  const yy = String(dateObj.getFullYear() % 100).padStart(2, '0');
+  
+  return `${ww}-${mm}-${qq}-${yy}`;
+}
+
 function initDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -28,11 +78,11 @@ function initDB() {
       if (!db.objectStoreNames.contains('reminders')) db.createObjectStore('reminders', { keyPath: 'id', autoIncrement: true });
       if (!db.objectStoreNames.contains('people')) db.createObjectStore('people', { keyPath: 'id', autoIncrement: true });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('dayLogs')) db.createObjectStore('dayLogs', { keyPath: 'date' });
     };
   });
 }
 
-// Database Helpers
 function getAll(storeName) {
   return new Promise((resolve) => {
     const tx = db.transaction(storeName, 'readonly');
@@ -43,6 +93,9 @@ function getAll(storeName) {
 
 function saveItem(storeName, item) {
   return new Promise((resolve) => {
+    if (item.date) {
+      item.secDateKey = getSecondaryCalendarKey(new Date(item.date));
+    }
     const tx = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
     const req = item.id ? store.put(item) : store.add(item);
@@ -58,7 +111,6 @@ function deleteItem(storeName, id) {
   });
 }
 
-// App Initialization
 document.addEventListener('DOMContentLoaded', async () => {
   await initDB();
   registerServiceWorker();
@@ -73,26 +125,22 @@ function registerServiceWorker() {
   }
 }
 
-// Global UI Event Listeners
 function setupEventListeners() {
-  // Settings Modal
   document.getElementById('settings-btn').addEventListener('click', () => {
+    renderSettingsDropdowns();
     document.getElementById('settings-modal').classList.remove('hidden');
   });
   document.getElementById('close-settings-modal').addEventListener('click', () => {
     document.getElementById('settings-modal').classList.add('hidden');
   });
 
-  // Export Data
   document.getElementById('export-data-btn').addEventListener('click', exportData);
   document.getElementById('import-data-btn').addEventListener('click', importData);
 
-  // Sample Downloads
   document.querySelectorAll('.sample-btn').forEach(btn => {
     btn.addEventListener('click', (e) => downloadSample(e.target.dataset.type));
   });
 
-  // Home Navigation
   document.getElementById('prev-week-btn').addEventListener('click', () => { currentWeekOffset--; renderHome(); });
   document.getElementById('next-week-btn').addEventListener('click', () => { currentWeekOffset++; renderHome(); });
   document.getElementById('reset-week-btn').addEventListener('click', () => { currentWeekOffset = 0; renderHome(); });
@@ -100,22 +148,18 @@ function setupEventListeners() {
     document.getElementById('day-details-modal').classList.add('hidden');
   });
 
-  // Task Form & Dynamic Input
   document.getElementById('task-deadline-type').addEventListener('change', updateTaskDeadlineInput);
   document.getElementById('task-form').addEventListener('submit', handleTaskSubmit);
   document.getElementById('add-project-btn').addEventListener('click', addProjectPrompt);
 
-  // Event Form
   document.getElementById('event-form').addEventListener('submit', handleEventSubmit);
 
-  // Reminder Form
   document.getElementById('reminder-form').addEventListener('submit', handleReminderSubmit);
   document.querySelectorAll('.day-chip').forEach(chip => {
     chip.addEventListener('click', () => chip.classList.toggle('selected'));
   });
   document.getElementById('add-aspect-btn').addEventListener('click', addAspectPrompt);
 
-  // Person Form Dynamic Fields
   document.getElementById('add-phone-btn').addEventListener('click', () => addDynamicField('phones-container', 'phone', ''));
   document.getElementById('add-email-btn').addEventListener('click', () => addDynamicField('emails-container', 'email', ''));
   document.getElementById('add-relationship-btn').addEventListener('click', () => addRelationshipField());
@@ -124,7 +168,9 @@ function setupEventListeners() {
     document.getElementById('person-details-modal').classList.add('hidden');
   });
 
-  // Action Modal (Long Press Options)
+  document.getElementById('settings-delete-project-btn').addEventListener('click', deleteSelectedProject);
+  document.getElementById('settings-delete-aspect-btn').addEventListener('click', deleteSelectedAspect);
+
   document.getElementById('action-cancel-btn').addEventListener('click', () => {
     document.getElementById('action-modal').classList.add('hidden');
   });
@@ -132,7 +178,6 @@ function setupEventListeners() {
   document.getElementById('action-edit-btn').addEventListener('click', handleLongPressEdit);
 }
 
-// Tab Navigation Logic
 function setupTabNavigation() {
   const tabs = document.querySelectorAll('.tab-btn');
   tabs.forEach(tab => {
@@ -155,18 +200,13 @@ function renderAll() {
   renderPeople();
 }
 
-// ==========================================
-// HOME TAB LOGIC
-// ==========================================
 async function renderHome() {
   const tasks = await getAll('tasks');
   const events = await getAll('events');
   const reminders = await getAll('reminders');
 
-  // Agenda Summary
   renderAgendaSummary(tasks, events, reminders);
 
-  // Week View Calculation
   const today = new Date();
   const startOfWeek = getStartOfWeek(today, currentWeekOffset);
   const weekDaysContainer = document.getElementById('week-days-container');
@@ -183,19 +223,24 @@ async function renderHome() {
     const dayDate = new Date(startOfWeek);
     dayDate.setDate(dayDate.getDate() + i);
     const dateStr = dayDate.toISOString().split('T')[0];
-
     const isToday = dayDate.toDateString() === today.toDateString();
     
-    // Filter items for this day
     const dayTasks = tasks.filter(t => t.deadline === dateStr);
     const dayEvents = events.filter(e => isEventOnDate(e, dayDate));
     const dayReminders = reminders.filter(r => isReminderOnDate(r, dayDate));
 
+    const secKey = getSecondaryCalendarKey(dayDate);
+    const regKey = getRegularCalendarKey(dayDate);
+
     const row = document.createElement('div');
-    row.className = `day-row ${isToday ? 'today-highlight' : ''}`;
+    row.className = `day-row-container ${isToday ? 'today-highlight' : ''}`;
     row.innerHTML = `
-      <div class="day-title">${dayNames[i]} (${dayDate.getMonth()+1}/${dayDate.getDate()})</div>
-      <div class="day-counts">Tasks: ${dayTasks.length} | Events: ${dayEvents.length} | Reminders: ${dayReminders.length}</div>
+      <div class="day-row-top">
+        <span class="day-sec-cal">${secKey}</span>
+        <span class="day-center-label">${dayNames[i]}</span>
+        <span class="day-reg-cal">${regKey}</span>
+      </div>
+      <div class="day-summary-bottom">Tasks: ${dayTasks.length} | Events: ${dayEvents.length} | Reminders: ${dayReminders.length}</div>
     `;
     row.addEventListener('click', () => showDayDetails(dayNames[i], dateStr, dayTasks, dayEvents, dayReminders));
     weekDaysContainer.appendChild(row);
@@ -211,8 +256,6 @@ function getStartOfWeek(d, weekOffset = 0) {
 
 function renderAgendaSummary(tasks, events, reminders) {
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-
   const todayItems = events.filter(e => isEventOnDate(e, today));
   const weekItems = events.filter(e => isEventInWeek(e, today));
   const monthItems = events.filter(e => isEventInMonth(e, today));
@@ -235,47 +278,24 @@ function renderAgendaList(containerId, items) {
   `).join('');
 }
 
-function showDayDetails(dayName, dateStr, tasks, events, reminders) {
-  const modal = document.getElementById('day-details-modal');
-  document.getElementById('day-modal-title').textContent = `${dayName} (${dateStr})`;
-  const body = document.getElementById('day-modal-body');
-  
-  let html = `<h4>Tasks</h4>`;
-  html += tasks.length ? tasks.map(t => `<p>• ${t.title} [${t.project}]</p>`).join('') : '<p class="text-muted">None</p>';
-  
-  html += `<h4 style="margin-top:10px;">Events</h4>`;
-  html += events.length ? events.map(e => `<p>• ${e.type}: ${e.persons ? e.persons.join(', ') : ''}</p>`).join('') : '<p class="text-muted">None</p>';
-  
-  html += `<h4 style="margin-top:10px;">Reminders</h4>`;
-  html += reminders.length ? reminders.map(r => `<p>• ${r.title} (${r.aspect})</p>`).join('') : '<p class="text-muted">None</p>';
-
-  body.innerHTML = html;
-  modal.classList.remove('hidden');
-}
-
-// ==========================================
-// TASKS TAB LOGIC
-// ==========================================
 async function renderTasks() {
   const tasks = await getAll('tasks');
   const people = await getAll('people');
 
-  // Populate Assigned Person Dropdown
-  const assignedSelect = document.getElementById('task-assigned');
-  assignedSelect.innerHTML = '<option value="">Unassigned</option>' + 
-    people.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  window.cachedPeople = people;
+  setupTaskPersonSearch();
 
-  // Extract Projects
-  const projects = ['All', 'Default Tasks', ...new Set(tasks.map(t => t.project).filter(Boolean))];
+  const setProjects = [...new Set(['Default Tasks', ...tasks.map(t => t.project).filter(Boolean), ...customProjects])];
+  customProjects = setProjects;
+
   const chipsContainer = document.getElementById('project-chips');
-  chipsContainer.innerHTML = projects.map(p => `
+  chipsContainer.innerHTML = ['All', ...customProjects].map(p => `
     <div class="chip ${currentProject === p ? 'active' : ''}" onclick="selectProject('${p}')">${p}</div>
   `).join('');
 
   const projectSelect = document.getElementById('task-project');
-  projectSelect.innerHTML = projects.filter(p => p !== 'All').map(p => `<option value="${p}">${p}</option>`).join('');
+  projectSelect.innerHTML = customProjects.map(p => `<option value="${p}">${p}</option>`).join('');
 
-  // Filter Tasks
   const filteredTasks = currentProject === 'All' ? tasks : tasks.filter(t => t.project === currentProject);
   const tasksList = document.getElementById('tasks-list');
   tasksList.innerHTML = '';
@@ -291,14 +311,12 @@ async function renderTasks() {
       </div>
     `;
     
-    // Tap once to toggle completed status
     item.addEventListener('click', async () => {
       t.completed = !t.completed;
       await saveItem('tasks', t);
       renderTasks();
     });
 
-    // Long press for options
     addLongPressHandler(item, () => openActionModal('tasks', t));
     tasksList.appendChild(item);
   });
@@ -339,6 +357,7 @@ async function handleTaskSubmit(e) {
   await saveItem('tasks', task);
   document.getElementById('task-form').reset();
   document.getElementById('task-id').value = '';
+  document.getElementById('task-assigned-search').value = '';
   renderTasks();
 }
 
@@ -350,27 +369,19 @@ function selectProject(p) {
 function addProjectPrompt() {
   const name = prompt('Enter new project name:');
   if (name) {
+    if (!customProjects.includes(name)) customProjects.push(name);
     currentProject = name;
     renderTasks();
   }
 }
 
-// ==========================================
-// EVENTS TAB LOGIC
-// ==========================================
 async function renderEvents() {
   const events = await getAll('events');
   const people = await getAll('people');
 
-  // Multi-person selection check list
-  const personsContainer = document.getElementById('event-persons-select');
-  personsContainer.innerHTML = people.map(p => `
-    <label class="multi-select-item">
-      <input type="checkbox" name="event-person" value="${p.name}"> ${p.name}
-    </label>
-  `).join('') || '<div class="text-muted">No people added yet</div>';
+  window.cachedPeople = people;
+  setupEventPersonSearch();
 
-  // Filter events for Current Quarter (with 3-day lead in)
   const now = new Date();
   const currentQuarterEvents = events.filter(e => isEventInQuarterWithLead(e, now));
 
@@ -394,7 +405,7 @@ async function renderEvents() {
 async function handleEventSubmit(e) {
   e.preventDefault();
   const id = document.getElementById('event-id').value;
-  const checkedPersons = Array.from(document.querySelectorAll('input[name="event-person"]:checked')).map(cb => cb.value);
+  const checkedPersons = [...selectedEventPersons];
   const eventObj = {
     persons: checkedPersons,
     type: document.getElementById('event-type').value,
@@ -403,6 +414,8 @@ async function handleEventSubmit(e) {
   if (id) eventObj.id = parseInt(id);
   await saveItem('events', eventObj);
   document.getElementById('event-form').reset();
+  selectedEventPersons = [];
+  renderEventPersonTags();
   document.getElementById('event-id').value = '';
   renderEvents();
   renderHome();
@@ -441,28 +454,24 @@ function isEventInQuarterWithLead(e, today) {
   if (!e.date) return false;
   const leadStart = new Date(today);
   leadStart.setDate(leadStart.getDate() - 3);
-  
   const eDate = new Date(e.date);
   const currentQ = Math.floor(today.getMonth() / 3);
   const eventQ = Math.floor(eDate.getMonth() / 3);
-  
   return (currentQ === eventQ) || (eDate >= leadStart && eDate <= today);
 }
 
-// ==========================================
-// REMINDERS TAB LOGIC
-// ==========================================
 async function renderReminders() {
   const reminders = await getAll('reminders');
-  
-  const aspects = ['Daily', ...new Set(reminders.map(r => r.aspect).filter(Boolean))];
+  const setAspects = [...new Set(['Daily', ...reminders.map(r => r.aspect).filter(Boolean), ...customAspects])];
+  customAspects = setAspects;
+
   const chipsContainer = document.getElementById('aspect-chips');
-  chipsContainer.innerHTML = aspects.map(a => `
+  chipsContainer.innerHTML = customAspects.map(a => `
     <div class="chip ${currentAspect === a ? 'active' : ''}" onclick="selectAspect('${a}')">${a}</div>
   `).join('');
 
   const aspectSelect = document.getElementById('reminder-aspect');
-  aspectSelect.innerHTML = aspects.map(a => `<option value="${a}">${a}</option>`).join('');
+  aspectSelect.innerHTML = customAspects.map(a => `<option value="${a}">${a}</option>`).join('');
 
   const filteredReminders = reminders.filter(r => r.aspect === currentAspect);
   const remindersList = document.getElementById('reminders-list');
@@ -475,7 +484,7 @@ async function renderReminders() {
     item.innerHTML = `
       <div>
         <div class="item-title">${r.title}</div>
-        <div class="item-details">Aspect: ${r.aspect} | Every ${r.weeksInterval} wk(s) on: ${daysStr}</div>
+        <div class="item-details">Start: ${r.startDate || 'N/A'} | Aspect: ${r.aspect} | Every ${r.weeksInterval} wk(s) on: ${daysStr}</div>
       </div>
     `;
     addLongPressHandler(item, () => openActionModal('reminders', r));
@@ -491,6 +500,7 @@ function selectAspect(a) {
 function addAspectPrompt() {
   const name = prompt('Enter new Aspect / List name:');
   if (name) {
+    if (!customAspects.includes(name)) customAspects.push(name);
     currentAspect = name;
     renderReminders();
   }
@@ -502,6 +512,7 @@ async function handleReminderSubmit(e) {
   const selectedDays = Array.from(document.querySelectorAll('.day-chip.selected')).map(chip => parseInt(chip.dataset.day));
   const reminder = {
     title: document.getElementById('reminder-title').value,
+    startDate: document.getElementById('reminder-start-date').value,
     aspect: document.getElementById('reminder-aspect').value || 'Daily',
     weeksInterval: document.getElementById('reminder-weeks-interval').value || 1,
     days: selectedDays
@@ -515,19 +526,16 @@ async function handleReminderSubmit(e) {
 }
 
 function isReminderOnDate(r, date) {
+  if (r.startDate && new Date(date) < new Date(r.startDate)) return false;
   if (!r.days || r.days.length === 0) return true;
   return r.days.includes(date.getDay());
 }
 
-// ==========================================
-// PEOPLE TAB LOGIC
-// ==========================================
 async function renderPeople() {
   const people = await getAll('people');
   const tasks = await getAll('tasks');
   const events = await getAll('events');
 
-  // Sort contacts alphabetically
   people.sort((a, b) => a.name.localeCompare(b.name));
 
   const peopleList = document.getElementById('people-list');
@@ -541,18 +549,15 @@ async function renderPeople() {
         ${p.photo ? `<img src="${p.photo}" class="photo-avatar">` : `<div class="photo-avatar">👤</div>`}
         <div>
           <div class="item-title">${p.name} (${p.code})</div>
-          <div class="item-details">${p.phones ? p.phones.join(', ') : 'No phone'}</div>
         </div>
       </div>
     `;
     
-    // Tap person to open detail modal
     item.addEventListener('click', () => showPersonDetails(p, people, tasks, events));
     addLongPressHandler(item, () => openActionModal('people', p));
     peopleList.appendChild(item);
   });
 
-  // Update Relationships Dropdown Options
   window.cachedPeople = people;
 }
 
@@ -593,7 +598,6 @@ async function handlePersonSubmit(e) {
     code = generateNextPersonCode(people);
   }
 
-  // Handle Photo
   const photoInput = document.getElementById('person-photo-input');
   let photoData = null;
   if (photoInput.files && photoInput.files[0]) {
@@ -729,9 +733,6 @@ async function deletePersonFromDetails(id) {
   }
 }
 
-// ==========================================
-// LONG PRESS & CONTEXT ACTION HANDLERS
-// ==========================================
 function addLongPressHandler(element, callback) {
   let timer;
   element.addEventListener('touchstart', (e) => {
@@ -785,6 +786,7 @@ function editItem(storeName, item) {
   } else if (storeName === 'reminders') {
     document.getElementById('reminder-id').value = item.id;
     document.getElementById('reminder-title').value = item.title;
+    document.getElementById('reminder-start-date').value = item.startDate || '';
     document.getElementById('reminder-aspect').value = item.aspect;
     document.getElementById('reminder-weeks-interval').value = item.weeksInterval || 1;
   } else if (storeName === 'people') {
@@ -792,8 +794,7 @@ function editItem(storeName, item) {
     document.getElementById('person-serial-code').value = item.code;
     document.getElementById('person-name').value = item.name;
     document.getElementById('person-notes').value = item.notes || '';
-    
-    // Fill dynamic fields
+
     const pContainer = document.getElementById('phones-container');
     pContainer.innerHTML = '';
     if (item.phones) item.phones.forEach(ph => addDynamicField('phones-container', 'phone', ph));
@@ -808,9 +809,36 @@ function editItem(storeName, item) {
   }
 }
 
-// ==========================================
-// IMPORT & EXPORT SETTINGS LOGIC
-// ==========================================
+function renderSettingsDropdowns() {
+  const pSelect = document.getElementById('settings-delete-project-select');
+  pSelect.innerHTML = customProjects.filter(p => p !== 'Default Tasks').map(p => `<option value="${p}">${p}</option>`).join('') || '<option value="">No custom projects</option>';
+
+  const aSelect = document.getElementById('settings-delete-aspect-select');
+  aSelect.innerHTML = customAspects.filter(a => a !== 'Daily').map(a => `<option value="${a}">${a}</option>`).join('') || '<option value="">No custom aspects</option>';
+}
+
+function deleteSelectedProject() {
+  const pSelect = document.getElementById('settings-delete-project-select');
+  const val = pSelect.value;
+  if (val) {
+    customProjects = customProjects.filter(p => p !== val);
+    if (currentProject === val) currentProject = 'All';
+    renderSettingsDropdowns();
+    renderTasks();
+  }
+}
+
+function deleteSelectedAspect() {
+  const aSelect = document.getElementById('settings-delete-aspect-select');
+  const val = aSelect.value;
+  if (val) {
+    customAspects = customAspects.filter(a => a !== val);
+    if (currentAspect === val) currentAspect = 'Daily';
+    renderSettingsDropdowns();
+    renderReminders();
+  }
+}
+
 async function exportData() {
   const target = document.getElementById('export-tab-select').value;
   let data = {};
@@ -868,7 +896,7 @@ function downloadSample(type) {
   } else if (type === 'events') {
     sampleData = [{ persons: ['John Doe'], type: 'Birthday', date: '2026-05-15' }];
   } else if (type === 'reminders') {
-    sampleData = [{ title: 'Sample Reminder', aspect: 'Daily', weeksInterval: 1, days: [1, 3, 5] }];
+    sampleData = [{ title: 'Sample Reminder', startDate: '2026-01-01', aspect: 'Daily', weeksInterval: 1, days: [1, 3, 5] }];
   } else if (type === 'people') {
     sampleData = [{ code: 'P00001', name: 'John Doe', phones: ['1234567890'], emails: ['john@example.com'], notes: 'Sample note' }];
   }
@@ -879,4 +907,165 @@ function downloadSample(type) {
   a.href = url;
   a.download = `sample_${type}.json`;
   a.click();
+}
+
+function setupTaskPersonSearch() {
+  const searchInput = document.getElementById('task-assigned-search');
+  const hiddenInput = document.getElementById('task-assigned');
+  const resultsDiv = document.getElementById('task-assigned-results');
+
+  if (!searchInput) return;
+
+  searchInput.addEventListener('input', () => {
+    const query = searchInput.value.toLowerCase().trim();
+    const people = window.cachedPeople || [];
+    const filtered = people.filter(p => p.name.toLowerCase().includes(query) || (p.code && p.code.toLowerCase().includes(query)));
+
+    if (filtered.length === 0) {
+      resultsDiv.innerHTML = '<div class="search-result-item text-muted">No matches</div>';
+    } else {
+      resultsDiv.innerHTML = filtered.map(p => `
+        <div class="search-result-item" onclick="selectTaskPerson('${p.id}', '${p.name.replace(/'/g, "\'")}')">
+          ${p.name} (${p.code})
+        </div>
+      `).join('');
+    }
+    resultsDiv.classList.remove('hidden');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.searchable-select-container')) {
+      resultsDiv.classList.add('hidden');
+    }
+  });
+}
+
+function selectTaskPerson(id, name) {
+  document.getElementById('task-assigned').value = id;
+  document.getElementById('task-assigned-search').value = name;
+  document.getElementById('task-assigned-results').classList.add('hidden');
+}
+
+function setupEventPersonSearch() {
+  const searchInput = document.getElementById('event-person-search');
+  const resultsDiv = document.getElementById('event-person-results');
+
+  if (!searchInput) return;
+
+  searchInput.addEventListener('input', () => {
+    const query = searchInput.value.toLowerCase().trim();
+    const people = window.cachedPeople || [];
+    const filtered = people.filter(p => p.name.toLowerCase().includes(query));
+
+    if (filtered.length === 0) {
+      resultsDiv.innerHTML = '<div class="search-result-item text-muted">No matches</div>';
+    } else {
+      resultsDiv.innerHTML = filtered.map(p => `
+        <div class="search-result-item" onclick="addEventPersonTag('${p.name.replace(/'/g, "\'")}')">
+          ${p.name} (${p.code})
+        </div>
+      `).join('');
+    }
+    resultsDiv.classList.remove('hidden');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.searchable-multi-select')) {
+      resultsDiv.classList.add('hidden');
+    }
+  });
+}
+
+function addEventPersonTag(name) {
+  if (!selectedEventPersons.includes(name)) {
+    selectedEventPersons.push(name);
+    renderEventPersonTags();
+  }
+  document.getElementById('event-person-search').value = '';
+  document.getElementById('event-person-results').classList.add('hidden');
+}
+
+function removeEventPersonTag(name) {
+  selectedEventPersons = selectedEventPersons.filter(n => n !== name);
+  renderEventPersonTags();
+}
+
+function renderEventPersonTags() {
+  const container = document.getElementById('event-selected-tags');
+  if (!container) return;
+  container.innerHTML = selectedEventPersons.map(n => `
+    <span class="tag-chip">${n} <span class="remove-tag" onclick="removeEventPersonTag('${n.replace(/'/g, "\'")}')">&times;</span></span>
+  `).join('');
+}
+
+async function showDayDetails(dayName, dateStr, tasks, events, reminders) {
+  const modal = document.getElementById('day-details-modal');
+  const dateObj = new Date(dateStr);
+  const secKey = getSecondaryCalendarKey(dateObj);
+  const regKey = getRegularCalendarKey(dateObj);
+
+  document.getElementById('day-modal-title').textContent = `${secKey} | ${dayName} | ${regKey}`;
+  const body = document.getElementById('day-modal-body');
+  
+  const dayLog = await getDayLog(dateStr);
+  
+  let html = `<h4>Tasks</h4>`;
+  html += tasks.length ? tasks.map(t => `<p>• ${t.title} [${t.project}]</p>`).join('') : '<p class="text-muted">None</p>';
+  
+  html += `<h4 style="margin-top:10px;">Events</h4>`;
+  html += events.length ? events.map(e => `<p>• ${e.type}: ${e.persons ? e.persons.join(', ') : ''}</p>`).join('') : '<p class="text-muted">None</p>';
+  
+  html += `<h4 style="margin-top:10px;">Reminders</h4>`;
+  html += reminders.length ? reminders.map(r => `<p>• ${r.title} (${r.aspect})</p>`).join('') : '<p class="text-muted">None</p>';
+
+  html += `
+    <div class="day-log-box">
+      <h4>Log / Actual Day Notes</h4>
+      <div id="day-log-display" style="font-size:13px; padding:6px 0;">
+        ${dayLog && dayLog.notes ? dayLog.notes : '<span class="text-muted">No notes logged for this day.</span>'}
+      </div>
+      <div id="day-log-edit-form" class="hidden">
+        <textarea id="day-log-input" class="day-log-textarea" placeholder="Type your actual day log notes here...">${dayLog && dayLog.notes ? dayLog.notes : ''}</textarea>
+        <button id="save-day-log-btn" class="btn btn-primary btn-sm" onclick="saveDayLogNote('${dateStr}')">Save Note</button>
+      </div>
+      <button id="toggle-day-log-btn" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="toggleDayLogEdit()">Edit Log</button>
+    </div>
+  `;
+
+  body.innerHTML = html;
+  modal.classList.remove('hidden');
+}
+
+function getDayLog(dateStr) {
+  return new Promise((resolve) => {
+    if (!db.objectStoreNames.contains('dayLogs')) {
+      resolve(null);
+      return;
+    }
+    const tx = db.transaction('dayLogs', 'readonly');
+    const req = tx.objectStore('dayLogs').get(dateStr);
+    req.onsuccess = () => resolve(req.result);
+  });
+}
+
+async function saveDayLogNote(dateStr) {
+  const notes = document.getElementById('day-log-input').value;
+  const secDateKey = getSecondaryCalendarKey(new Date(dateStr));
+  const tx = db.transaction('dayLogs', 'readwrite');
+  await tx.objectStore('dayLogs').put({ date: dateStr, secDateKey: secDateKey, notes: notes });
+  document.getElementById('day-log-display').innerHTML = notes || '<span class="text-muted">No notes logged for this day.</span>';
+  document.getElementById('day-log-edit-form').classList.add('hidden');
+  document.getElementById('toggle-day-log-btn').textContent = 'Edit Log';
+}
+
+function toggleDayLogEdit() {
+  const form = document.getElementById('day-log-edit-form');
+  const btn = document.getElementById('toggle-day-log-btn');
+  if (form.classList.contains('hidden')) {
+    form.classList.remove('hidden');
+    btn.textContent = 'Cancel Edit';
+  } else {
+    form.classList.add('hidden');
+    btn.textContent = 'Edit Log';
+  }
 }

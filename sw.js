@@ -1,5 +1,4 @@
-// Service Worker for Rolodex PWA Offline Support
-const CACHE_NAME = 'rolodex-cache-v1';
+const CACHE_NAME = 'rolodex-cache-v2';
 const ASSETS = [
   './',
   './index.html',

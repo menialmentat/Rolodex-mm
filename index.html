@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rolodex Mobile</title>
+  <title>Rolodex Mobile PWA</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#2563eb">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
-    <!-- Top Header -->
+    <!-- Header with Settings -->
     <header class="app-header">
       <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
       <h1 class="app-title">Rolodex App</h1>
       <div class="header-spacer"></div>
     </header>
 
-    <!-- Main Navigation Tabs -->
+    <!-- Navigation Tabs -->
     <nav class="nav-tabs">
       <button class="tab-btn active" data-tab="home">Home</button>
       <button class="tab-btn" data-tab="tasks">Tasks</button>
@@ -26,7 +26,7 @@
       <button class="tab-btn" data-tab="people">People</button>
     </nav>
 
-    <!-- Tab Contents -->
+    <!-- Main Content -->
     <main class="content-container">
 
       <!-- HOME TAB -->
@@ -60,7 +60,7 @@
         </div>
 
         <div class="card week-view-card">
-          <h2 id="week-view-header">Week View</h2>
+          <h2>Week View</h2>
           <div id="week-days-container" class="week-days-list"></div>
         </div>
 
@@ -68,6 +68,7 @@
           <button id="reset-week-btn" class="btn btn-secondary">Reset to Current Week</button>
         </div>
 
+        <!-- Day Details Modal -->
         <div id="day-details-modal" class="modal hidden">
           <div class="modal-content">
             <span class="close-modal" id="close-day-modal">&times;</span>
@@ -84,12 +85,16 @@
           <form id="task-form">
             <input type="hidden" id="task-id">
             <div class="form-group">
-              <label for="task-title">Task:</label>
+              <label for="task-title">Task Name:</label>
               <input type="text" id="task-title" required placeholder="Task title...">
             </div>
             <div class="form-group">
-              <label for="task-assigned">Assigned Person:</label>
-              <select id="task-assigned"></select>
+              <label for="task-assigned-search">Assigned Person:</label>
+              <div class="searchable-select-container">
+                <input type="text" id="task-assigned-search" placeholder="Type to search person..." autocomplete="off">
+                <input type="hidden" id="task-assigned">
+                <div id="task-assigned-results" class="search-results-dropdown hidden"></div>
+              </div>
             </div>
             <div class="form-group">
               <label for="task-project">Project Name:</label>
@@ -105,7 +110,7 @@
               </select>
             </div>
             <div class="form-group">
-              <label for="task-deadline-val">Deadline Value:</label>
+              <label for="task-deadline-val">Deadline:</label>
               <div id="task-deadline-input-container">
                 <input type="date" id="task-deadline-val" required>
               </div>
@@ -132,8 +137,12 @@
           <form id="event-form">
             <input type="hidden" id="event-id">
             <div class="form-group">
-              <label for="event-title">Event Title / Person(s):</label>
-              <div id="event-persons-select" class="multi-select-box"></div>
+              <label for="event-person-search">Person(s) Involved:</label>
+              <div class="searchable-multi-select">
+                <input type="text" id="event-person-search" placeholder="Type to search and select person..." autocomplete="off">
+                <div id="event-selected-tags" class="selected-tags-container"></div>
+                <div id="event-person-results" class="search-results-dropdown hidden"></div>
+              </div>
             </div>
             <div class="form-group">
               <label for="event-type">Event Type:</label>
@@ -167,6 +176,10 @@
             <div class="form-group">
               <label for="reminder-title">Reminder:</label>
               <input type="text" id="reminder-title" required placeholder="Reminder text...">
+            </div>
+            <div class="form-group">
+              <label for="reminder-start-date">Start Date:</label>
+              <input type="date" id="reminder-start-date" required>
             </div>
             <div class="form-group">
               <label for="reminder-aspect">Aspect / List Name:</label>
@@ -262,6 +275,26 @@
       <div class="modal-content">
         <span class="close-modal" id="close-settings-modal">&times;</span>
         <h2>Settings & Data Management</h2>
+        
+        <div class="settings-section">
+          <h3>Manage Custom Lists & Projects</h3>
+          <div class="form-group">
+            <label>Delete Custom Project:</label>
+            <div class="inline-select-btn">
+              <select id="settings-delete-project-select"></select>
+              <button id="settings-delete-project-btn" class="btn btn-danger btn-sm">Delete Project</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Delete Custom Aspect:</label>
+            <div class="inline-select-btn">
+              <select id="settings-delete-aspect-select"></select>
+              <button id="settings-delete-aspect-btn" class="btn btn-danger btn-sm">Delete Aspect</button>
+            </div>
+          </div>
+        </div>
+        <hr>
+
         <div class="settings-section">
           <h3>Export Data</h3>
           <div class="form-group">
@@ -277,6 +310,7 @@
           <button id="export-data-btn" class="btn btn-secondary">Export JSON</button>
         </div>
         <hr>
+
         <div class="settings-section">
           <h3>Import Data</h3>
           <div class="form-group">
@@ -293,6 +327,7 @@
           <button id="import-data-btn" class="btn btn-secondary">Import File</button>
         </div>
         <hr>
+
         <div class="settings-section">
           <h3>Download Sample Templates</h3>
           <div class="sample-btn-grid">
@@ -305,7 +340,7 @@
       </div>
     </div>
 
-    <!-- CONTEXT / ACTION MODAL FOR LONG PRESS -->
+    <!-- ACTION / LONG PRESS MODAL -->
     <div id="action-modal" class="modal hidden">
       <div class="modal-content modal-sm">
         <h3 id="action-modal-title">Item Options</h3>
