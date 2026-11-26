@@ -1,6 +1,6 @@
 {
-  "name": "Rolodex PWA v3",
-  "short_name": "Rolodex v3",
+  "name": "Rolodex PWA v4",
+  "short_name": "Rolodex v4",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#f4f6f8",

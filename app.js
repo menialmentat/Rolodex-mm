@@ -1,5 +1,6 @@
 /**
- * Rolodex PWA - Version 3 Engine
+ * Rolodex PWA - Version 4 Engine
+ * (Logs and Journal changes reverted back to V2 baseline)
  */
 
 const ANCHOR_OCT_16_1991 = new Date(1991, 9, 16);
@@ -12,15 +13,13 @@ let customEventTypes = ["Birthday", "Anniversary", "Death Anniversary", "Other"]
 // IndexedDB Initialization
 function initDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("RolodexV3DB", 1);
+    const req = indexedDB.open("RolodexV4DB", 1);
     req.onupgradeneeded = (e) => {
       const database = e.target.result;
       if (!database.objectStoreNames.contains("people")) database.createObjectStore("people", { keyPath: "id" });
       if (!database.objectStoreNames.contains("events")) database.createObjectStore("events", { keyPath: "id" });
       if (!database.objectStoreNames.contains("tasks")) database.createObjectStore("tasks", { keyPath: "id" });
       if (!database.objectStoreNames.contains("reminders")) database.createObjectStore("reminders", { keyPath: "id" });
-      if (!database.objectStoreNames.contains("logs")) database.createObjectStore("logs", { keyPath: "id" });
-      if (!database.objectStoreNames.contains("journals")) database.createObjectStore("journals", { keyPath: "id" });
     };
     req.onsuccess = (e) => {
       db = e.target.result;
@@ -32,7 +31,6 @@ function initDB() {
 
 // Calendar Systems
 function getSecondaryDateStr(date) {
-  // Anchored Oct 16, 1991 (13 months x 4 weeks = 52 weeks, Q1-Q4)
   const diffDays = Math.floor((date - ANCHOR_OCT_16_1991) / (1000 * 60 * 60 * 24));
   const totalWeeks = Math.floor(diffDays / 7);
   const weekInYear = ((totalWeeks % 52) + 52) % 52 + 1;
@@ -51,7 +49,6 @@ function getPrimaryDateStr(date) {
   const dd = String(date.getDate()).padStart(2, '0');
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   const yy = String(date.getFullYear()).slice(-2);
-  // Week number standard calculation
   const startYear = new Date(date.getFullYear(), 0, 1);
   const ww = String(Math.ceil((((date - startYear) / 86400000) + startYear.getDay() + 1) / 7)).padStart(2, '0');
   
@@ -117,12 +114,10 @@ function setupEventListeners() {
 
 function renderAllViews() {
   renderAgendaSummary();
-  renderDailyLogs();
   renderPeopleList();
   renderEventsList();
   renderTasksView();
   renderRemindersView();
-  renderJournalView();
   renderWeekView();
 }
 
@@ -150,7 +145,6 @@ async function renderPeopleList() {
     const card = document.createElement('div');
     card.className = 'person-card';
     
-    // Note: Serial code (e.g. P00001) is omitted completely from display
     const img = document.createElement('img');
     img.src = p.photo || 'https://via.placeholder.com/70';
     img.addEventListener('click', () => openPhotoModal(img.src));
@@ -235,7 +229,7 @@ async function renderRemindersView() {
 
     const item = document.createElement('div');
     item.className = 'task-item';
-    item.innerText = `${r.title} [${r.date}]`; // Details field omitted as requested
+    item.innerText = `${r.title} [${r.date}]`;
     container.appendChild(item);
   });
 
@@ -259,7 +253,7 @@ async function renderEventsList() {
     chk.type = 'checkbox';
     chk.checked = !!evt.done;
     chk.addEventListener('change', () => {
-      evt.done = chk.checked; // Done flag per instance (No time log)
+      evt.done = chk.checked;
       const wtx = db.transaction('events', 'readwrite');
       wtx.objectStore('events').put(evt);
     });
@@ -286,7 +280,6 @@ async function renderWeekView() {
   const tx = db.transaction('events', 'readonly');
   const events = await new Promise(res => tx.objectStore('events').getAll().onsuccess = e => res(e.target.result));
 
-  // Sort events by date and get last 10
   events.sort((a,b) => new Date(b.date) - new Date(a.date));
   const last10Ids = new Set(events.slice(0, 10).map(e => e.id));
 
@@ -296,15 +289,4 @@ async function renderWeekView() {
     item.innerText = `${evt.title} - ${evt.date}`;
     container.appendChild(item);
   });
-}
-
-// ---------------- Multi-Entry Daily Logs & Journal ----------------
-async function renderDailyLogs() {
-  const container = document.getElementById('daily-log-container');
-  container.innerHTML = '<em>Multi-entry logs loaded. Long press to edit.</em>';
-}
-
-async function renderJournalView() {
-  const container = document.getElementById('journal-entries-container');
-  container.innerHTML = '<em>Multi-entry journal logs active.</em>';
 }
