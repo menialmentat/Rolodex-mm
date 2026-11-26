@@ -120,6 +120,52 @@ body {
   color: var(--text-main);
 }
 
+.agenda-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.agenda-header-row h2 {
+  margin-bottom: 0;
+}
+
+.pill-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 44px;
+  height: 16px;
+  background-color: #b8cdfc;
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.pill-toggle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: #2563eb;
+  transition: transform 0.2s ease;
+}
+
+.pill-toggle:checked {
+  background-color: #93c5fd;
+}
+
+.pill-toggle:checked::before {
+  transform: translate(24px, -50%);
+}
+
 .form-group {
   margin-bottom: 12px;
 }
@@ -135,6 +181,9 @@ body {
 input[type="text"],
 input[type="number"],
 input[type="date"],
+input[type="week"],
+input[type="month"],
+input[type="file"],
 select,
 textarea {
   width: 100%;
@@ -186,6 +235,24 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
 }
 
+.btn-primary.btn-sm {
+  background-color: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.btn-secondary.btn-sm {
+  background-color: #e2e8f0;
+  color: var(--text-main);
+  border-color: #cbd5e1;
+}
+
+.btn-danger.btn-sm {
+  background-color: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+
 .scrollable-agenda {
   max-height: 180px;
   overflow-y: auto;
@@ -215,6 +282,10 @@ input:focus, select:focus, textarea:focus {
 
 .agenda-item {
   padding: 2px 0;
+}
+
+.text-muted {
+  color: var(--text-muted);
 }
 
 .week-nav-bar {
@@ -282,6 +353,7 @@ input:focus, select:focus, textarea:focus {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 4px;
+  text-align: center;
 }
 
 .sub-nav-bar {
@@ -327,6 +399,7 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  cursor: pointer;
 }
 
 .list-item.completed .item-title {
@@ -515,6 +588,22 @@ input:focus, select:focus, textarea:focus {
   border-top: 1px solid var(--border-color);
 }
 
+.day-log-entry {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: #ffffff;
+  font-size: 13px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.day-log-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .day-log-textarea {
   width: 100%;
   min-height: 60px;
@@ -525,4 +614,19 @@ input:focus, select:focus, textarea:focus {
 .inline-select-btn {
   display: flex;
   gap: 8px;
+}
+
+.settings-section {
+  margin: 12px 0;
+}
+
+.settings-section h3 {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 12px 0;
 }
