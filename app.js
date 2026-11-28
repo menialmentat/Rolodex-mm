@@ -1,4 +1,4 @@
-// Rolodex PWA - Version 7 Codebase
+// Rolodex PWA - Version 8 Codebase
 const DB_NAME = 'RolodexDB';
 const DB_VERSION = 2;
 const BACKUP_FILENAME = 'rolodex_backup.json';
@@ -20,6 +20,12 @@ let journalSelectedDateStr = null;
 let journalSelectedLabels = [];
 let journalSearchQuery = '';
 let backupDirHandle = null;
+let eventQuarterOffset = 0;
+let activeEventCalMonth = null;
+let selectedEventCalDateStr = null;
+let selectedPersonTypes = [];
+let activePeopleTypeFilters = [];
+let customPersonTypes = ['Friend', 'Family', 'Colleague', 'Client'];
 
 function parseLocalDate(dateStr) {
   if (!dateStr) return null;
@@ -330,6 +336,9 @@ function setupEventListeners() {
 
   setupTaskPersonSearch();
   setupEventPersonSearch();
+  setupPersonTypeSearch();
+  setupEventQuarterAndCalendarControls();
+  document.getElementById('share-log-btn')?.addEventListener('click', shareAppLog);
 }
 
 function setupTabNavigation() {
@@ -493,23 +502,43 @@ function renderAgendaSummary(tasks, events, reminders) {
     const monthEntries = [];
     const quarterEntries = [];
 
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const weekStartStr = toIsoDateStr(weekStart);
+    const weekEndStr = toIsoDateStr(weekEnd);
+
+    const monthStartStr = toIsoDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
+    const monthEndStr = toIsoDateStr(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+
+    const qIndex = Math.floor(today.getMonth() / 3);
+    const qStartStr = toIsoDateStr(new Date(today.getFullYear(), qIndex * 3, 1));
+    const qEndStr = toIsoDateStr(new Date(today.getFullYear(), qIndex * 3 + 3, 0));
+
     reminders.forEach(r => {
       const isRoutine = Boolean(r.routine);
-      const todayOccs = getReminderOccurrencesOnDate(r, today);
-      todayOccs.forEach(occ => {
-        todayEntries.push({ reminder: r, occ });
-      });
+      const allOccs = getReminderOccurrenceDates(r);
+
+      const tOccs = allOccs.filter(occ => occ.date === todayStr);
+      tOccs.forEach(occ => todayEntries.push({ reminder: r, occ }));
 
       if (isRoutine) {
-        todayOccs.forEach(occ => {
+        tOccs.forEach(occ => {
           weekEntries.push({ reminder: r, occ });
           monthEntries.push({ reminder: r, occ });
           quarterEntries.push({ reminder: r, occ });
         });
       } else {
-        getReminderOccurrencesInWeek(r, weekStart).forEach(occ => weekEntries.push({ reminder: r, occ }));
-        getReminderOccurrencesInMonth(r, today).forEach(occ => monthEntries.push({ reminder: r, occ }));
-        getReminderOccurrencesInQuarter(r, today).forEach(occ => quarterEntries.push({ reminder: r, occ }));
+        allOccs
+          .filter(occ => occ.date !== todayStr && occ.date >= weekStartStr && occ.date <= weekEndStr)
+          .forEach(occ => weekEntries.push({ reminder: r, occ }));
+
+        allOccs
+          .filter(occ => occ.date !== todayStr && occ.date >= monthStartStr && occ.date <= monthEndStr)
+          .forEach(occ => monthEntries.push({ reminder: r, occ }));
+
+        allOccs
+          .filter(occ => occ.date !== todayStr && occ.date >= qStartStr && occ.date <= qEndStr)
+          .forEach(occ => quarterEntries.push({ reminder: r, occ }));
       }
     });
 
@@ -696,18 +725,125 @@ function addProjectPrompt() {
 }
 
 // --- EVENTS TAB ---
+function getTargetQuarterInfo(baseDate, quarterOffset = 0) {
+  const d = parseLocalDate(baseDate);
+  const totalQuarters = d.getFullYear() * 4 + Math.floor(d.getMonth() / 3) + quarterOffset;
+  const year = Math.floor(totalQuarters / 4);
+  const qIndex = ((totalQuarters % 4) + 4) % 4;
+  const months = [0, 1, 2].map(m => qIndex * 3 + m);
+  return { year, qIndex, label: `Q${qIndex + 1} ${year}`, months };
+}
+
+function setupEventQuarterAndCalendarControls() {
+  document.getElementById('prev-event-quarter-btn')?.addEventListener('click', () => {
+    eventQuarterOffset--;
+    renderEvents();
+  });
+  document.getElementById('next-event-quarter-btn')?.addEventListener('click', () => {
+    eventQuarterOffset++;
+    renderEvents();
+  });
+  document.getElementById('open-events-calendar-btn')?.addEventListener('click', async () => {
+    activeEventCalMonth = getTodayLocal();
+    selectedEventCalDateStr = null;
+    document.getElementById('events-calendar-modal').classList.remove('hidden');
+    await renderEventsCalendarModal();
+  });
+  document.getElementById('close-events-calendar-modal')?.addEventListener('click', () => {
+    document.getElementById('events-calendar-modal').classList.add('hidden');
+  });
+  document.getElementById('ev-cal-prev-month-btn')?.addEventListener('click', async () => {
+    const base = activeEventCalMonth || getTodayLocal();
+    activeEventCalMonth = new Date(base.getFullYear(), base.getMonth() - 1, 1);
+    selectedEventCalDateStr = null;
+    await renderEventsCalendarModal();
+  });
+  document.getElementById('ev-cal-next-month-btn')?.addEventListener('click', async () => {
+    const base = activeEventCalMonth || getTodayLocal();
+    activeEventCalMonth = new Date(base.getFullYear(), base.getMonth() + 1, 1);
+    selectedEventCalDateStr = null;
+    await renderEventsCalendarModal();
+  });
+}
+
+async function renderEventsCalendarModal() {
+  const events = await getAll('events');
+  const base = activeEventCalMonth || getTodayLocal();
+  const year = base.getFullYear();
+  const month = base.getMonth();
+
+  document.getElementById('ev-cal-month-label').textContent =
+    new Date(year, month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const grid = document.getElementById('events-calendar-grid');
+  grid.innerHTML = '';
+
+  const dows = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  dows.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'habit-cal-dow';
+    el.textContent = d;
+    grid.appendChild(el);
+  });
+
+  const firstOfMonth = new Date(year, month, 1);
+  const mondayOffset = (firstOfMonth.getDay() + 6) % 7;
+  const gridStart = new Date(year, month, 1 - mondayOffset);
+
+  for (let i = 0; i < 42; i++) {
+    const cellDate = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    const dateStr = toIsoDateStr(cellDate);
+    const inMonth = cellDate.getMonth() === month;
+    const matchingEvents = events.filter(ev => isEventOnDate(ev, cellDate));
+
+    const cell = document.createElement('div');
+    cell.className = 'event-cal-day';
+    if (!inMonth) cell.classList.add('muted-day');
+    if (matchingEvents.length > 0) {
+      cell.classList.add('has-event');
+      if (selectedEventCalDateStr === dateStr) cell.classList.add('selected-event-day');
+      cell.addEventListener('click', () => {
+        selectedEventCalDateStr = dateStr;
+        renderEventsCalendarModal();
+        const detailsEl = document.getElementById('events-calendar-day-details');
+        detailsEl.innerHTML = `
+          <h4>Events on ${escapeHtml(dateStr)}</h4>
+          ${matchingEvents.map(ev => `
+            <p style="margin-top:6px;">• <strong>${escapeHtml(ev.type)}</strong> — ${ev.persons && ev.persons.length ? escapeHtml(ev.persons.join(', ')) : 'Event'} (${escapeHtml(ev.date || '')})</p>
+          `).join('')}
+        `;
+      });
+    }
+    cell.textContent = cellDate.getDate();
+    grid.appendChild(cell);
+  }
+}
+
 async function renderEvents() {
   const events = await getAll('events');
   const people = await getAll('people');
   window.cachedPeople = people;
 
   const now = getTodayLocal();
-  const currentQuarterEvents = events.filter(ev => isEventInQuarterWithLead(ev, now));
+  const qInfo = getTargetQuarterInfo(now, eventQuarterOffset);
+  const labelEl = document.getElementById('event-quarter-label');
+  if (labelEl) labelEl.textContent = qInfo.label;
+
+  const quarterEvents = events.filter(ev => {
+    if (!ev.date) return false;
+    const eDate = parseLocalDate(ev.date);
+    return qInfo.months.includes(eDate.getMonth());
+  });
 
   const eventsList = document.getElementById('events-list');
   eventsList.innerHTML = '';
 
-  currentQuarterEvents.forEach(ev => {
+  if (!quarterEvents.length) {
+    eventsList.innerHTML = `<div class="text-muted" style="font-size:13px;">No events in ${escapeHtml(qInfo.label)}.</div>`;
+    return;
+  }
+
+  quarterEvents.forEach(ev => {
     const item = document.createElement('div');
     item.className = 'list-item';
     item.innerHTML = `
@@ -719,67 +855,6 @@ async function renderEvents() {
     addLongPressHandler(item, () => openActionModal('events', ev));
     eventsList.appendChild(item);
   });
-}
-
-async function handleEventSubmit(e) {
-  e.preventDefault();
-  const id = document.getElementById('event-id').value;
-  const checkedPersons = [...selectedEventPersons];
-  const eventObj = {
-    persons: checkedPersons,
-    type: document.getElementById('event-type').value,
-    date: document.getElementById('event-date').value,
-  };
-  if (id) eventObj.id = parseInt(id, 10);
-  await saveItem('events', eventObj);
-  document.getElementById('event-form').reset();
-  selectedEventPersons = [];
-  renderEventPersonTags();
-  document.getElementById('event-id').value = '';
-  renderEvents();
-  renderHome();
-}
-
-function isEventOnDate(ev, targetDate) {
-  if (!ev.date) return false;
-  const eDate = parseLocalDate(ev.date);
-  const tDate = parseLocalDate(targetDate);
-  return eDate.getMonth() === tDate.getMonth() && eDate.getDate() === tDate.getDate();
-}
-
-function isEventInWeek(ev, today) {
-  const base = parseLocalDate(today);
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(base);
-    d.setDate(d.getDate() + i);
-    if (isEventOnDate(ev, d)) return true;
-  }
-  return false;
-}
-
-function isEventInMonth(ev, today) {
-  if (!ev.date) return false;
-  const eDate = parseLocalDate(ev.date);
-  const tDate = parseLocalDate(today);
-  return eDate.getMonth() === tDate.getMonth();
-}
-
-function isEventInQuarter(ev, today) {
-  if (!ev.date) return false;
-  const eDate = parseLocalDate(ev.date);
-  const tDate = parseLocalDate(today);
-  return Math.floor(tDate.getMonth() / 3) === Math.floor(eDate.getMonth() / 3);
-}
-
-function isEventInQuarterWithLead(ev, today) {
-  if (!ev.date) return false;
-  const tDate = parseLocalDate(today);
-  const leadStart = new Date(tDate);
-  leadStart.setDate(leadStart.getDate() - 3);
-  const eDate = parseLocalDate(ev.date);
-  const currentQ = Math.floor(tDate.getMonth() / 3);
-  const eventQ = Math.floor(eDate.getMonth() / 3);
-  return (currentQ === eventQ) || (eDate >= leadStart && eDate <= tDate);
 }
 
 // --- REMINDERS TAB: End Date, Aspect Collapsible Groups, Habit Calendar Modal & Completion ---
@@ -1150,6 +1225,90 @@ async function handleReminderSubmit(e) {
 }
 
 // --- PEOPLE TAB ---
+function getAllKnownPersonTypes(people = []) {
+  const fromPeople = [];
+  people.forEach(p => {
+    const types = Array.isArray(p.types) ? p.types : (p.type ? [p.type] : []);
+    types.forEach(t => {
+      if (t && String(t).trim()) fromPeople.push(String(t).trim());
+    });
+  });
+  return [...new Set([...customPersonTypes, ...fromPeople])];
+}
+
+function renderPersonTypeTags() {
+  const container = document.getElementById('person-type-tags');
+  if (!container) return;
+  container.innerHTML = selectedPersonTypes.map(t => `
+    <span class="tag-chip">${escapeHtml(t)} <span class="remove-tag" onclick="removePersonTypeTag('${escapeHtml(t).replace(/'/g, "\'")}')">&times;</span></span>
+  `).join('');
+}
+
+function addPersonTypeTag(typeName) {
+  const cleaned = String(typeName || '').trim();
+  if (!cleaned) return;
+  if (!customPersonTypes.includes(cleaned)) {
+    customPersonTypes.push(cleaned);
+  }
+  if (!selectedPersonTypes.includes(cleaned)) {
+    selectedPersonTypes.push(cleaned);
+    renderPersonTypeTags();
+  }
+  const input = document.getElementById('person-type-search');
+  const results = document.getElementById('person-type-results');
+  if (input) input.value = '';
+  if (results) results.classList.add('hidden');
+}
+
+function removePersonTypeTag(typeName) {
+  selectedPersonTypes = selectedPersonTypes.filter(t => t !== typeName);
+  renderPersonTypeTags();
+}
+
+function setupPersonTypeSearch() {
+  const input = document.getElementById('person-type-search');
+  const resultsDiv = document.getElementById('person-type-results');
+  if (!input || !resultsDiv) return;
+
+  const renderDropdown = () => {
+    const raw = input.value.trim();
+    const query = raw.toLowerCase();
+    const allTypes = getAllKnownPersonTypes(window.cachedPeople || []);
+    const filtered = allTypes.filter(t => t.toLowerCase().includes(query));
+
+    let html = filtered.map(t => `
+      <div class="search-result-item" onclick="addPersonTypeTag('${escapeHtml(t).replace(/'/g, "\'")}')">${escapeHtml(t)}</div>
+    `).join('');
+
+    if (raw && !allTypes.some(t => t.toLowerCase() === query)) {
+      html += `<div class="search-result-item" style="font-weight:600;color:var(--primary-dark);" onclick="addPersonTypeTag('${escapeHtml(raw).replace(/'/g, "\'")}')">+ Add new type "${escapeHtml(raw)}"</div>`;
+    } else if (!html) {
+      html = '<div class="search-result-item text-muted">Type to add a new person type</div>';
+    }
+
+    resultsDiv.innerHTML = html;
+    resultsDiv.classList.remove('hidden');
+  };
+
+  input.addEventListener('focus', renderDropdown);
+  input.addEventListener('input', renderDropdown);
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#person-type-search') && !e.target.closest('#person-type-results')) {
+      resultsDiv.classList.add('hidden');
+    }
+  });
+}
+
+function togglePeopleTypeFilter(typeName) {
+  if (activePeopleTypeFilters.includes(typeName)) {
+    activePeopleTypeFilters = activePeopleTypeFilters.filter(t => t !== typeName);
+  } else {
+    activePeopleTypeFilters.push(typeName);
+  }
+  renderPeople();
+}
+
 function openFullPhotoModal(src, title = 'Photo') {
   if (!src) return;
   document.getElementById('photo-viewer-title').textContent = title;
@@ -1174,17 +1333,35 @@ async function renderPeople() {
   const people = await getAll('people');
   const tasks = await getAll('tasks');
   const events = await getAll('events');
+  window.cachedPeople = people;
+
+  const knownTypes = getAllKnownPersonTypes(people);
+  activePeopleTypeFilters = activePeopleTypeFilters.filter(t => knownTypes.includes(t));
+
+  const filterBar = document.getElementById('people-type-filters');
+  if (filterBar) {
+    filterBar.innerHTML = knownTypes.map(t => {
+      const isSelected = activePeopleTypeFilters.includes(t);
+      return `<button type="button" class="chip ${isSelected ? 'active' : ''}" onclick="togglePeopleTypeFilter('${escapeHtml(t).replace(/'/g, "\'")}')">${escapeHtml(t)}</button>`;
+    }).join('');
+  }
 
   const q = peopleSearchQuery;
-  const filteredPeople = q
-    ? people.filter(p => {
-        const inName = (p.name || '').toLowerCase().includes(q);
-        const inCode = (p.code || '').toLowerCase().includes(q);
-        const inPhones = Array.isArray(p.phones) && p.phones.some(ph => String(ph).toLowerCase().includes(q));
-        const inEmails = Array.isArray(p.emails) && p.emails.some(em => String(em).toLowerCase().includes(q));
-        return inName || inCode || inPhones || inEmails;
-      })
-    : [...people];
+  const filteredPeople = people.filter(p => {
+    const pTypes = Array.isArray(p.types) ? p.types : (p.type ? [p.type] : []);
+    const matchesType = activePeopleTypeFilters.length === 0
+      ? true
+      : activePeopleTypeFilters.some(ft => pTypes.includes(ft));
+    if (!matchesType) return false;
+
+    if (!q) return true;
+    const inName = (p.name || '').toLowerCase().includes(q);
+    const inCode = (p.code || '').toLowerCase().includes(q);
+    const inTypes = pTypes.some(pt => String(pt).toLowerCase().includes(q));
+    const inPhones = Array.isArray(p.phones) && p.phones.some(ph => String(ph).toLowerCase().includes(q));
+    const inEmails = Array.isArray(p.emails) && p.emails.some(em => String(em).toLowerCase().includes(q));
+    return inName || inCode || inTypes || inPhones || inEmails;
+  });
 
   filteredPeople.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
@@ -1192,8 +1369,7 @@ async function renderPeople() {
   peopleList.innerHTML = '';
 
   if (!filteredPeople.length) {
-    peopleList.innerHTML = `<div class="text-muted" style="font-size:13px;">${q ? 'No matching people found.' : 'No contacts added yet.'}</div>`;
-    window.cachedPeople = people;
+    peopleList.innerHTML = `<div class="text-muted" style="font-size:13px;">${(q || activePeopleTypeFilters.length) ? 'No matching people found.' : 'No contacts added yet.'}</div>`;
     return;
   }
 
@@ -1222,13 +1398,14 @@ async function renderPeople() {
       header.appendChild(avatar);
     }
 
+    const pTypes = Array.isArray(p.types) ? p.types : (p.type ? [p.type] : []);
     const infoCol = document.createElement('div');
     const titleDiv = document.createElement('div');
     titleDiv.className = 'item-title';
     titleDiv.textContent = p.name;
     const codeDiv = document.createElement('div');
     codeDiv.className = 'person-code-subline';
-    codeDiv.textContent = p.code || '';
+    codeDiv.textContent = pTypes.length ? `${p.code || ''} • ${pTypes.join(', ')}` : (p.code || '');
     infoCol.appendChild(titleDiv);
     infoCol.appendChild(codeDiv);
     header.appendChild(infoCol);
@@ -1238,8 +1415,6 @@ async function renderPeople() {
     addLongPressHandler(item, () => openActionModal('people', p));
     peopleList.appendChild(item);
   });
-
-  window.cachedPeople = people;
 }
 
 function addDynamicField(containerId, name, value = '') {
@@ -1300,6 +1475,7 @@ async function handlePersonSubmit(e) {
   const person = {
     code,
     name: document.getElementById('person-name').value.trim(),
+    types: [...selectedPersonTypes],
     photo: photoData,
     phones,
     emails,
@@ -1311,6 +1487,8 @@ async function handlePersonSubmit(e) {
 
   await saveItem('people', person);
   editingPersonPhoto = null;
+  selectedPersonTypes = [];
+  renderPersonTypeTags();
   document.getElementById('person-form').reset();
   document.getElementById('person-id').value = '';
   document.getElementById('person-serial-code').value = '';
@@ -1349,6 +1527,7 @@ function showPersonDetails(p, allPeople, tasks, events) {
 
   const personTasks = tasks.filter(t => t.assigned == p.id);
   const personEvents = events.filter(ev => ev.persons && ev.persons.includes(p.name));
+  const pTypes = Array.isArray(p.types) ? p.types : (p.type ? [p.type] : []);
 
   let relHtml = '';
   if (p.relationships && p.relationships.length) {
@@ -1379,6 +1558,7 @@ function showPersonDetails(p, allPeople, tasks, events) {
     <div style="text-align:center; margin-bottom:12px;">
       ${photoHtml}
       <h2>${escapeHtml(p.name)} (${escapeHtml(p.code)})</h2>
+      ${pTypes.length ? `<div class="text-muted" style="font-size:13px;">${escapeHtml(pTypes.join(', '))}</div>` : ''}
     </div>
     <h4>Phone Numbers</h4>
     ${phonesHtml}
@@ -1545,6 +1725,8 @@ function editItem(storeName, item) {
     });
   } else if (storeName === 'people') {
     editingPersonPhoto = item.photo || null;
+    selectedPersonTypes = Array.isArray(item.types) ? [...item.types] : (item.type ? [item.type] : []);
+    renderPersonTypeTags();
     document.getElementById('person-id').value = item.id;
     document.getElementById('person-serial-code').value = item.code;
     document.getElementById('person-name').value = item.name;
@@ -1799,6 +1981,51 @@ function downloadSample(type) {
   URL.revokeObjectURL(url);
 }
 
+async function shareAppLog() {
+  const allLogs = await getAll('dayLogs');
+  const lines = [];
+  allLogs
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .forEach(rec => {
+      const entries = normalizeDayLogEntries(rec);
+      entries.forEach(en => {
+        lines.push(`${rec.date} [${en.label || 'General'}] (${formatEntryTime(en.createdAt)}): ${en.text}`);
+      });
+    });
+
+  const logText = lines.length ? lines.join('\n') : 'No journal logs available.';
+
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Rolodex Journal Logs',
+        text: logText
+      });
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(logText);
+      alert('Journal logs copied to clipboard.');
+      return;
+    } catch (err) {
+      // fall through to download
+    }
+  }
+
+  const blob = new Blob([logText], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'rolodex_logs.txt';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // --- SEARCH PICKERS ---
 function setupTaskPersonSearch() {
   const searchInput = document.getElementById('task-assigned-search');
@@ -2034,6 +2261,58 @@ async function showDayDetails(dayName, dateStr, allOrDayTasks, events, reminders
   modal.classList.remove('hidden');
 }
 
+async function getPreviousLogLabels() {
+  const allLogs = await getAll('dayLogs');
+  const labels = new Set(['General']);
+  allLogs.forEach(rec => {
+    normalizeDayLogEntries(rec).forEach(entry => {
+      if (entry.label && String(entry.label).trim()) {
+        labels.add(String(entry.label).trim());
+      }
+    });
+  });
+  return [...labels].sort((a, b) => a.localeCompare(b));
+}
+
+function attachLabelDropdownSuggestions(labelInput) {
+  if (!labelInput) return;
+  let dropdown = document.getElementById('day-log-label-dropdown');
+  if (!dropdown) {
+    dropdown = document.createElement('div');
+    dropdown.id = 'day-log-label-dropdown';
+    dropdown.className = 'search-results-dropdown hidden';
+    labelInput.parentNode.style.position = 'relative';
+    labelInput.parentNode.appendChild(dropdown);
+  }
+
+  const showSuggestions = async () => {
+    const query = labelInput.value.trim().toLowerCase();
+    const allLabels = await getPreviousLogLabels();
+    const matches = allLabels.filter(l => l.toLowerCase().includes(query));
+    dropdown.innerHTML = matches.length
+      ? matches.map(l => `<div class="search-result-item">${escapeHtml(l)}</div>`).join('')
+      : '<div class="search-result-item text-muted">No matching labels</div>';
+
+    dropdown.querySelectorAll('.search-result-item').forEach((item, idx) => {
+      if (!matches[idx]) return;
+      item.addEventListener('click', () => {
+        labelInput.value = matches[idx];
+        dropdown.classList.add('hidden');
+      });
+    });
+    dropdown.classList.remove('hidden');
+  };
+
+  labelInput.addEventListener('focus', showSuggestions);
+  labelInput.addEventListener('input', showSuggestions);
+
+  document.addEventListener('click', (e) => {
+    if (e.target !== labelInput && !dropdown.contains(e.target)) {
+      dropdown.classList.add('hidden');
+    }
+  });
+}
+
 function openNewDayLogInput(prefillText = '', logId = null, dateStr = null, prefillLabel = '') {
   editingLogContext = logId && dateStr ? { id: logId, date: dateStr } : null;
   const form = document.getElementById('day-log-edit-form');
@@ -2042,7 +2321,10 @@ function openNewDayLogInput(prefillText = '', logId = null, dateStr = null, pref
   const addBtn = document.getElementById('add-day-log-btn');
   if (!form || !input) return;
 
-  if (labelInput) labelInput.value = prefillLabel || '';
+  if (labelInput) {
+    labelInput.value = prefillLabel || '';
+    attachLabelDropdownSuggestions(labelInput);
+  }
   input.value = prefillText;
   form.classList.remove('hidden');
   if (addBtn) addBtn.classList.add('hidden');

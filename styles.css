@@ -1088,3 +1088,78 @@ hr {
   opacity: 0.65;
   background-color: #f1f5f9;
 }
+
+.people-type-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.events-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.events-header-bar h2 {
+  margin-bottom: 0;
+}
+
+.events-quarter-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.events-quarter-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  text-align: center;
+}
+
+.event-cal-day {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  background-color: transparent;
+  border: 1px solid transparent;
+}
+
+.event-cal-day.muted-day {
+  color: #cbd5e1;
+}
+
+.event-cal-day.has-event {
+  background-color: #86efac;
+  color: #064e3b;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.event-cal-day.selected-event-day {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.event-cal-details {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+  font-size: 13px;
+}
+
+.log-dropdown-container {
+  position: relative;
+}
